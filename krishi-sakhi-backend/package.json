@@ -1,12 +1,12 @@
 {
   "name": "krishi-sakhi-backend",
   "version": "1.0.0",
-  "description": "Backend server for Krishi Sakhi farm analysis application - SIH25168",
+  "description": "Backend API for Krishi Sakhi (farm analysis, AI assistant, crop image analysis, weather, marketplace, community) - SIH25168",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test tests/api.test.js"
   },
   "keywords": [
     "agriculture",
@@ -38,5 +38,8 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

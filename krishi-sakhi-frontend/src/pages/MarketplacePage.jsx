@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { marketplaceAPI } from '../api/services';
+import { getErrorMessage } from '../api/client';
 import ProductCard from '../components/ProductCard';
 import SearchBar from '../components/SearchBar';
 import CategoryFilter from '../components/CategoryFilter';
@@ -57,9 +58,9 @@ const MarketplacePage = () => {
         setProducts(response.data.products);
         setPagination(response.data.pagination);
       }
-    } catch (error) {
-      console.error('Failed to fetch products:', error);
-      setError('Failed to load products. Please try again.');
+    } catch (err) {
+      setProducts([]);
+      setError(getErrorMessage(err, 'Failed to load products. Please try again.'));
     } finally {
       setIsLoading(false);
     }

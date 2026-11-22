@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { authAPI } from '../api/services';
+import { getErrorMessage } from '../api/client';
+import { setSession } from '../utils/auth';
 import { FaUser, FaLock, FaEnvelope, FaPhone, FaMapMarkerAlt, FaLeaf, FaUserPlus } from 'react-icons/fa';
 
 const SignupPage = () => {
@@ -43,45 +45,17 @@ const SignupPage = () => {
     }
 
     try {
-      // Check if email already exists in localStorage (mock check)
-      const existingUsers = JSON.parse(localStorage.getItem('users') || '[]');
-      const emailExists = existingUsers.some(user => user.email === formData.email);
-      
-      if (emailExists) {
-        setError('Email already registered. Please use a different email.');
-        setIsLoading(false);
-        return;
-      }
-
-      // Create user object
-      const newUser = {
-        id: Date.now().toString(),
-        name: formData.name,
-        email: formData.email,
-        phone: formData.phone,
-        location: formData.location,
-        createdAt: new Date().toISOString()
-      };
-
-      // Add user to users array
-      existingUsers.push(newUser);
-      localStorage.setItem('users', JSON.stringify(existingUsers));
-      
-      // Set as current user
-      localStorage.setItem('user', JSON.stringify(newUser));
-      localStorage.setItem('auth_token', 'mock-token-' + newUser.id);
-      
-      // Show success message
-      setError('');
-      
-      // Redirect to home after a short delay
-      setTimeout(() => {
-        navigate('/');
-      }, 500);
-      
+      const result = await authAPI.register({
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        password: formData.password,
+        ...(formData.phone.trim() && { phone: formData.phone.trim() }),
+        ...(formData.location.trim() && { location: formData.location.trim() }),
+      });
+      setSession(result.data.token, result.data.user);
+      navigate('/farm-analysis');
     } catch (error) {
-      console.error('Signup error:', error);
-      setError('Failed to create account. Please try again.');
+      setError(getErrorMessage(error, 'Failed to create account. Please try again.'));
     } finally {
       setIsLoading(false);
     }

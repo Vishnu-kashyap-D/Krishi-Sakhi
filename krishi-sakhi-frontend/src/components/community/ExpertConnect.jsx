@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { FaUserMd, FaVideo, FaPhone, FaStar, FaClock, FaCalendarAlt, FaFilter, FaSearch, FaCheckCircle } from 'react-icons/fa';
 import { useLanguage } from '../../context/LanguageContext';
+import { communityAPI } from '../../api/services';
+import { getErrorMessage } from '../../api/client';
 
 const ExpertConnect = () => {
   const { translate } = useLanguage();
@@ -10,6 +12,8 @@ const ExpertConnect = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedExpert, setSelectedExpert] = useState(null);
   const [showBookingModal, setShowBookingModal] = useState(false);
+  const [bookingError, setBookingError] = useState(null);
+  const [bookingMessage, setBookingMessage] = useState(null);
   const [bookingDetails, setBookingDetails] = useState({
     date: '',
     time: '',
@@ -116,17 +120,22 @@ const ExpertConnect = () => {
     setShowBookingModal(true);
   };
 
-  const handleSubmitBooking = (e) => {
+  const handleSubmitBooking = async (e) => {
     e.preventDefault();
-    // In real app, submit to API
-    alert(translate('bookingSuccess', 'Your consultation has been booked successfully!'));
-    setShowBookingModal(false);
-    setBookingDetails({
-      date: '',
-      time: '',
-      consultationType: 'video',
-      issue: ''
-    });
+    setBookingError(null);
+    try {
+      const res = await communityAPI.bookExpert({ expertId: selectedExpert.id, ...bookingDetails });
+      setBookingMessage(res.message || translate('bookingSuccess', 'Your consultation request has been saved.'));
+      setShowBookingModal(false);
+      setBookingDetails({
+        date: '',
+        time: '',
+        consultationType: 'video',
+        issue: ''
+      });
+    } catch (err) {
+      setBookingError(getErrorMessage(err, 'Could not book the consultation.'));
+    }
   };
 
   return (
@@ -140,6 +149,12 @@ const ExpertConnect = () => {
           {translate('expertDescription', 'Get personalized advice from verified agronomists and agricultural scientists')}
         </p>
       </div>
+
+      {bookingMessage && (
+        <div className="bg-green-50 border border-green-300 text-green-800 px-4 py-3 rounded-lg flex items-center gap-2" role="status">
+          <FaCheckCircle /> {bookingMessage}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-gray-50 p-4 rounded-lg space-y-4">
@@ -265,6 +280,9 @@ const ExpertConnect = () => {
               {translate('bookConsultationWith', 'Book Consultation with')} {selectedExpert.name}
             </h3>
             
+            {bookingError && (
+              <div className="bg-red-50 border border-red-300 text-red-700 px-3 py-2 rounded mb-4 text-sm" role="alert">{bookingError}</div>
+            )}
             <form onSubmit={handleSubmitBooking} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2">
@@ -288,6 +306,7 @@ const ExpertConnect = () => {
                   type="date"
                   value={bookingDetails.date}
                   onChange={(e) => setBookingDetails({...bookingDetails, date: e.target.value})}
+                  min={new Date().toISOString().slice(0, 10)}
                   className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500"
                   required
                 />

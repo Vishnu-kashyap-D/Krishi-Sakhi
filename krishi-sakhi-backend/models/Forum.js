@@ -1,190 +1,64 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/db');
 
-// Forum Thread Schema
-const forumThreadSchema = new mongoose.Schema({
-  title: {
-    type: String,
-    required: true,
-    trim: true,
-    maxlength: 200
-  },
-  description: {
-    type: String,
-    required: true,
-    maxlength: 1000
-  },
-  author: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  category: {
-    type: String,
-    required: true,
-    enum: ['crop-advice', 'pest-disease', 'weather', 'market-prices', 'government-schemes', 'technology', 'general', 'success-stories']
-  },
-  tags: [String],
-  images: [{
-    url: String,
-    alt: String
-  }],
-  location: {
-    state: String,
-    district: String,
-    coordinates: {
-      lat: Number,
-      lng: Number
-    }
-  },
-  status: {
-    type: String,
-    enum: ['active', 'closed', 'pinned', 'archived'],
-    default: 'active'
-  },
-  views: {
-    type: Number,
-    default: 0
-  },
-  upvotes: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }],
-  downvotes: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }],
-  totalPosts: {
-    type: Number,
-    default: 0
-  },
-  lastActivity: {
-    type: Date,
-    default: Date.now
-  },
-  lastPost: {
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    createdAt: Date
-  },
-  isAnswered: {
-    type: Boolean,
-    default: false
-  },
-  bestAnswer: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'ForumPost'
-  }
+const ForumPost = sequelize.define('ForumPost', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  userId: { type: DataTypes.INTEGER, allowNull: true },
+  // Name/location shown for posts (copied from the user at post time, or from seed data).
+  authorName: { type: DataTypes.STRING, allowNull: false },
+  authorLocation: { type: DataTypes.STRING, allowNull: true },
+  title: { type: DataTypes.STRING, allowNull: false, validate: { notEmpty: true, len: [3, 200] } },
+  content: { type: DataTypes.TEXT, allowNull: false, validate: { notEmpty: true, len: [1, 5000] } },
+  category: { type: DataTypes.STRING, allowNull: false, defaultValue: 'general' },
+  language: { type: DataTypes.STRING, allowNull: false, defaultValue: 'en' },
+  tags: { type: DataTypes.JSON, defaultValue: [] },
+  likes: { type: DataTypes.INTEGER, defaultValue: 0 },
+  views: { type: DataTypes.INTEGER, defaultValue: 0 },
+  isSolved: { type: DataTypes.BOOLEAN, defaultValue: false }
 }, {
-  timestamps: true
+  tableName: 'forum_posts',
+  indexes: [{ fields: ['category'] }, { fields: ['created_at'] }]
 });
 
-// Forum Post Schema
-const forumPostSchema = new mongoose.Schema({
-  thread: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'ForumThread',
-    required: true
-  },
-  author: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  content: {
-    type: String,
-    required: true,
-    maxlength: 2000
-  },
-  parentPost: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'ForumPost',
-    default: null
-  },
-  images: [{
-    url: String,
-    alt: String
-  }],
-  upvotes: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }],
-  downvotes: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }],
-  reports: [{
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    reason: String,
-    createdAt: {
-      type: Date,
-      default: Date.now
-    }
-  }],
-  isAcceptedAnswer: {
-    type: Boolean,
-    default: false
-  },
-  editHistory: [{
-    content: String,
-    editedAt: {
-      type: Date,
-      default: Date.now
-    }
-  }],
-  isDeleted: {
-    type: Boolean,
-    default: false
-  },
-  deletedAt: Date,
-  deletedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }
+const ForumComment = sequelize.define('ForumComment', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  postId: { type: DataTypes.INTEGER, allowNull: false },
+  userId: { type: DataTypes.INTEGER, allowNull: true },
+  authorName: { type: DataTypes.STRING, allowNull: false },
+  content: { type: DataTypes.TEXT, allowNull: false, validate: { notEmpty: true, len: [1, 2000] } }
 }, {
-  timestamps: true
+  tableName: 'forum_comments',
+  indexes: [{ fields: ['postId', 'created_at'] }]
 });
 
-// Indexes
-forumThreadSchema.index({ category: 1, status: 1 });
-forumThreadSchema.index({ author: 1 });
-forumThreadSchema.index({ createdAt: -1 });
-forumThreadSchema.index({ lastActivity: -1 });
-forumThreadSchema.index({ title: 'text', description: 'text', tags: 'text' });
-forumThreadSchema.index({ 'location.coordinates': '2dsphere' });
-
-forumPostSchema.index({ thread: 1, createdAt: 1 });
-forumPostSchema.index({ author: 1 });
-forumPostSchema.index({ parentPost: 1 });
-
-// Virtuals
-forumThreadSchema.virtual('score').get(function() {
-  return this.upvotes.length - this.downvotes.length;
+// One row per (user/visitor, post) so a like can only be counted once.
+const ForumLike = sequelize.define('ForumLike', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  postId: { type: DataTypes.INTEGER, allowNull: false },
+  likerKey: { type: DataTypes.STRING, allowNull: false }
+}, {
+  tableName: 'forum_likes',
+  indexes: [{ unique: true, fields: ['postId', 'likerKey'] }]
 });
 
-forumPostSchema.virtual('score').get(function() {
-  return this.upvotes.length - this.downvotes.length;
+const ExpertBooking = sequelize.define('ExpertBooking', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  expertId: { type: DataTypes.INTEGER, allowNull: false },
+  userId: { type: DataTypes.INTEGER, allowNull: true },
+  name: { type: DataTypes.STRING, allowNull: true },
+  phone: { type: DataTypes.STRING, allowNull: true },
+  date: { type: DataTypes.DATEONLY, allowNull: false },
+  time: { type: DataTypes.STRING, allowNull: false },
+  consultationType: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    defaultValue: 'video',
+    validate: { isIn: [['video', 'audio', 'chat']] }
+  },
+  issue: { type: DataTypes.TEXT, allowNull: true },
+  status: { type: DataTypes.STRING, defaultValue: 'pending' }
+}, {
+  tableName: 'expert_bookings'
 });
 
-// Middleware to update thread stats
-forumPostSchema.post('save', async function(doc) {
-  if (this.isNew) {
-    await mongoose.model('ForumThread').findByIdAndUpdate(doc.thread, {
-      $inc: { totalPosts: 1 },
-      $set: {
-        lastActivity: new Date(),
-        'lastPost.user': doc.author,
-        'lastPost.createdAt': doc.createdAt
-      }
-    });
-  }
-});
-
-const ForumThread = mongoose.model('ForumThread', forumThreadSchema);
-const ForumPost = mongoose.model('ForumPost', forumPostSchema);
-
-module.exports = { ForumThread, ForumPost };
+module.exports = { ForumPost, ForumComment, ForumLike, ExpertBooking };

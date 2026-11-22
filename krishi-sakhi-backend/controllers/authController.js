@@ -1,260 +1,142 @@
+const { ValidationError, UniqueConstraintError } = require('sequelize');
 const User = require('../models/User');
 const { generateToken } = require('../middleware/auth');
 
-// Register new user
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Only these fields can be changed through the profile endpoint.
+const PROFILE_FIELDS = ['name', 'phone', 'location', 'farmDetails', 'avatar'];
+
+const validationMessage = (error) => (
+  error.errors && error.errors.length ? error.errors.map((e) => e.message).join(', ') : error.message
+);
+
 const register = async (req, res) => {
   try {
-    const { name, email, password, phone, location, farmDetails, role } = req.body;
+    const { name, email, password, phone, location, farmDetails, role } = req.body || {};
 
-    // Validation
     if (!name || !email || !password) {
-      return res.status(400).json({
-        error: 'Name, email, and password are required'
-      });
+      return res.status(400).json({ error: 'Name, email, and password are required' });
+    }
+    if (typeof password !== 'string' || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    }
+    if (!EMAIL_RE.test(String(email).trim())) {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({
-        error: 'Password must be at least 6 characters long'
-      });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    if (await User.findOne({ where: { email: normalizedEmail } })) {
+      return res.status(409).json({ error: 'An account with this email already exists' });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ where: { email: email.toLowerCase() } });
-    if (existingUser) {
-      return res.status(400).json({
-        error: 'User already exists with this email'
-      });
-    }
+    // Public sign-up can only create farmer or buyer accounts.
+    const safeRole = ['farmer', 'buyer'].includes(role) ? role : 'farmer';
 
-    // Create new user
-    const userData = {
-      name: name.trim(),
-      email: email.toLowerCase(),
+    const user = await User.create({
+      name: String(name).trim(),
+      email: normalizedEmail,
       password,
-      role: role || 'farmer'
-    };
+      role: safeRole,
+      ...(phone && { phone }),
+      ...(location && { location }),
+      ...(farmDetails && { farmDetails })
+    });
 
-    if (phone) userData.phone = phone;
-    if (location) userData.location = location;
-    if (farmDetails) userData.farmDetails = farmDetails;
-
-    const user = await User.create(userData);
-
-    // Generate token
-    const token = generateToken(user._id);
-
-    // Return success response
     res.status(201).json({
       success: true,
-      data: {
-        user: user.toJSON(),
-        token
-      },
+      data: { user: user.toJSON(), token: generateToken(user.id) },
       message: 'Registration successful'
     });
-
   } catch (error) {
+    if (error instanceof UniqueConstraintError) {
+      return res.status(409).json({ error: 'An account with this email already exists' });
+    }
+    if (error instanceof ValidationError) {
+      return res.status(400).json({ error: validationMessage(error) });
+    }
     console.error('Register error:', error);
-    res.status(500).json({
-      error: 'Registration failed',
-      details: error.message
-    });
+    res.status(500).json({ error: 'Registration failed' });
   }
 };
 
-// Login user
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
-
-    // Validation
+    const { email, password } = req.body || {};
     if (!email || !password) {
-      return res.status(400).json({
-        error: 'Email and password are required'
-      });
+      return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    // Find user and include password for comparison
-    const user = await User.findOne({ 
-      where: { email: email.toLowerCase() },
-      attributes: { include: ['password'] }
-    });
-    if (!user) {
-      return res.status(401).json({
-        error: 'Invalid email or password'
-      });
+    const user = await User.findOne({ where: { email: String(email).trim().toLowerCase() } });
+    if (!user || !(await user.comparePassword(String(password)))) {
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    // Check password
-    const isPasswordValid = await user.comparePassword(password);
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        error: 'Invalid email or password'
-      });
-    }
-
-    // Update last login
     user.lastLogin = new Date();
     await user.save();
 
-    // Generate token
-    const token = generateToken(user._id);
-
-    // Return success response (password is automatically excluded by toJSON)
     res.json({
       success: true,
-      data: {
-        user: user.toJSON(),
-        token
-      },
+      data: { user: user.toJSON(), token: generateToken(user.id) },
       message: 'Login successful'
     });
-
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({
-      error: 'Login failed',
-      details: error.message
-    });
+    res.status(500).json({ error: 'Login failed' });
   }
 };
 
-// Get current user profile
 const getProfile = async (req, res) => {
-  try {
-    // User is already attached to req by auth middleware
-    const user = await User.findByPk(req.user.id);
-
-    res.json({
-      success: true,
-      data: {
-        user: user.toJSON()
-      }
-    });
-  } catch (error) {
-    console.error('Get profile error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch profile',
-      details: error.message
-    });
-  }
+  res.json({ success: true, data: { user: req.user.toJSON() } });
 };
 
-// Update user profile
 const updateProfile = async (req, res) => {
   try {
-    const { name, phone, location, farmDetails, avatar } = req.body;
-    
-    const updateData = {};
-    if (name) updateData.name = name.trim();
-    if (phone) updateData.phone = phone;
-    if (location) updateData.location = location;
-    if (farmDetails) updateData.farmDetails = farmDetails;
-    if (avatar) updateData.avatar = avatar;
-
-    const [updatedRowsCount] = await User.update(
-      updateData,
-      { 
-        where: { id: req.user.id },
-        returning: true
-      }
-    );
-    
-    const user = await User.findByPk(req.user.id);
-
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found'
-      });
+    const updates = {};
+    for (const field of PROFILE_FIELDS) {
+      if (req.body[field] !== undefined) updates[field] = req.body[field];
     }
+    if (typeof updates.name === 'string') updates.name = updates.name.trim();
 
+    await req.user.update(updates);
     res.json({
       success: true,
-      data: {
-        user: user.toJSON()
-      },
+      data: { user: req.user.toJSON() },
       message: 'Profile updated successfully'
     });
-
   } catch (error) {
+    if (error instanceof ValidationError) {
+      return res.status(400).json({ error: validationMessage(error) });
+    }
     console.error('Update profile error:', error);
-    res.status(500).json({
-      error: 'Failed to update profile',
-      details: error.message
-    });
+    res.status(500).json({ error: 'Failed to update profile' });
   }
 };
 
-// Change password
 const changePassword = async (req, res) => {
   try {
-    const { currentPassword, newPassword } = req.body;
-
+    const { currentPassword, newPassword } = req.body || {};
     if (!currentPassword || !newPassword) {
-      return res.status(400).json({
-        error: 'Current password and new password are required'
-      });
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+    }
+    if (!(await req.user.comparePassword(String(currentPassword)))) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
     }
 
-    if (newPassword.length < 6) {
-      return res.status(400).json({
-        error: 'New password must be at least 6 characters long'
-      });
-    }
-
-    // Get user with password
-    const user = await User.findByPk(req.user.id, {
-      attributes: { include: ['password'] }
-    });
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found'
-      });
-    }
-
-    // Check current password
-    const isCurrentPasswordValid = await user.comparePassword(currentPassword);
-    if (!isCurrentPasswordValid) {
-      return res.status(401).json({
-        error: 'Current password is incorrect'
-      });
-    }
-
-    // Update password
-    user.password = newPassword;
-    await user.save();
-
-    res.json({
-      success: true,
-      message: 'Password changed successfully'
-    });
-
+    req.user.password = String(newPassword);
+    await req.user.save();
+    res.json({ success: true, message: 'Password changed successfully' });
   } catch (error) {
     console.error('Change password error:', error);
-    res.status(500).json({
-      error: 'Failed to change password',
-      details: error.message
-    });
+    res.status(500).json({ error: 'Failed to change password' });
   }
 };
 
-// Logout user (mainly for clearing cookies if used)
+// Tokens are stateless; the client discards its token on logout.
 const logout = async (req, res) => {
-  try {
-    // In a more advanced setup, you might want to blacklist the token
-    // For now, we'll just send a success response
-    res.json({
-      success: true,
-      message: 'Logged out successfully'
-    });
-  } catch (error) {
-    console.error('Logout error:', error);
-    res.status(500).json({
-      error: 'Logout failed',
-      details: error.message
-    });
-  }
+  res.json({ success: true, message: 'Logged out successfully' });
 };
 
 module.exports = {

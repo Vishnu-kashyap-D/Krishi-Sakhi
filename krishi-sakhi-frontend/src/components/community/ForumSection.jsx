@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { FaComments, FaPlus, FaSearch, FaMapMarkerAlt, FaLanguage, FaThumbsUp, FaComment, FaImage, FaFilter } from 'react-icons/fa';
+import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../../context/LanguageContext';
+import { communityAPI } from '../../api/services';
+import { getErrorMessage } from '../../api/client';
+import { getUser } from '../../utils/auth';
 
 const ForumSection = () => {
   const { translate, currentLanguage } = useLanguage();
+  const navigate = useNavigate();
   const [posts, setPosts] = useState([]);
   const [filteredPosts, setFilteredPosts] = useState([]);
   const [showCreatePost, setShowCreatePost] = useState(false);
@@ -17,54 +22,12 @@ const ForumSection = () => {
     image: null
   });
 
-  // Mock data for demonstration
-  const mockPosts = [
-    {
-      id: 1,
-      author: 'Rajesh Kumar',
-      location: 'Bhiwani, Haryana',
-      language: 'en',
-      title: 'Yellow Rust Disease in Wheat',
-      content: 'My wheat crop has been affected by yellow rust disease. Please suggest treatment options.',
-      category: 'crop-disease',
-      image: '/api/placeholder/400/300',
-      likes: 12,
-      comments: 8,
-      timestamp: new Date('2024-01-15T10:30:00'),
-      replies: [
-        {
-          author: 'Dr. Singh',
-          content: 'Apply Propiconazole 25% EC spray for effective control',
-          timestamp: new Date('2024-01-15T11:00:00')
-        }
-      ]
-    },
-    {
-      id: 2,
-      author: 'Priya Sharma',
-      location: 'Rohtak, Haryana',
-      language: 'en',
-      title: 'Method for Making Organic Compost',
-      content: 'I have successfully made organic compost at home. Here is my method...',
-      category: 'organic-farming',
-      likes: 25,
-      comments: 15,
-      timestamp: new Date('2024-01-14T14:20:00')
-    },
-    {
-      id: 3,
-      author: 'Suresh Yadav',
-      location: 'Hisar, Haryana',
-      language: 'en',
-      title: 'Water Savings with Drip Irrigation',
-      content: 'After installing drip irrigation system, I have achieved 40% water savings',
-      category: 'irrigation',
-      image: '/api/placeholder/400/300',
-      likes: 30,
-      comments: 10,
-      timestamp: new Date('2024-01-13T09:15:00')
-    }
-  ];
+  const [loadError, setLoadError] = useState(null);
+  const [actionError, setActionError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [openComments, setOpenComments] = useState(null);
+  const [commentText, setCommentText] = useState('');
+  const user = getUser();
 
   const categories = [
     { id: 'all', label: translate('allCategories', 'All Categories') },
@@ -83,11 +46,44 @@ const ForumSection = () => {
     { id: 'karnal', label: 'Karnal, Haryana' }
   ];
 
+  const toPost = (p) => ({ ...p, timestamp: new Date(p.timestamp), replies: p.replies || [] });
+
   useEffect(() => {
-    // In real app, fetch posts from API
-    setPosts(mockPosts);
-    setFilteredPosts(mockPosts);
+    communityAPI.getPosts()
+      .then((res) => setPosts(res.data.map(toPost)))
+      .catch((err) => setLoadError(getErrorMessage(err, 'Could not load forum posts.')));
   }, []);
+
+  const requireLogin = () => {
+    if (getUser()) return true;
+    navigate('/login', { state: { from: '/community' } });
+    return false;
+  };
+
+  const handleLike = async (postId) => {
+    setActionError(null);
+    try {
+      const res = await communityAPI.likePost(postId);
+      setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, likes: res.likes } : p)));
+    } catch (err) {
+      setActionError(getErrorMessage(err, 'Could not like the post.'));
+    }
+  };
+
+  const handleComment = async (e, postId) => {
+    e.preventDefault();
+    if (!commentText.trim() || !requireLogin()) return;
+    setActionError(null);
+    try {
+      const res = await communityAPI.addComment(postId, commentText.trim());
+      setPosts((prev) => prev.map((p) => (p.id === postId
+        ? { ...p, comments: p.comments + 1, replies: [...p.replies, res.data] }
+        : p)));
+      setCommentText('');
+    } catch (err) {
+      setActionError(getErrorMessage(err, 'Could not add the comment.'));
+    }
+  };
 
   useEffect(() => {
     // Filter posts based on search, location, and category
@@ -113,32 +109,33 @@ const ForumSection = () => {
     setFilteredPosts(filtered);
   }, [searchTerm, selectedLocation, selectedCategory, posts]);
 
-  const handleCreatePost = (e) => {
+  const handleCreatePost = async (e) => {
     e.preventDefault();
-    // In real app, send to API
-    const post = {
-      id: posts.length + 1,
-      author: 'Current User',
-      location: 'Bhiwani, Haryana',
-      language: currentLanguage,
-      ...newPost,
-      likes: 0,
-      comments: 0,
-      timestamp: new Date(),
-      replies: []
-    };
-    setPosts([post, ...posts]);
-    setNewPost({ title: '', content: '', category: 'general', image: null });
-    setShowCreatePost(false);
+    if (!requireLogin()) return;
+    setSubmitting(true);
+    setActionError(null);
+    try {
+      const res = await communityAPI.createPost({
+        title: newPost.title.trim(),
+        content: newPost.content.trim(),
+        category: newPost.category,
+        language: currentLanguage,
+      });
+      setPosts((prev) => [toPost(res.data), ...prev]);
+      setNewPost({ title: '', content: '', category: 'general', image: null });
+      setShowCreatePost(false);
+    } catch (err) {
+      setActionError(getErrorMessage(err, 'Could not publish the post.'));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const formatDate = (date) => {
-    const now = new Date();
-    const diffTime = Math.abs(now - date);
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
-    if (diffDays === 1) return translate('today', 'Today');
-    if (diffDays === 2) return translate('yesterday', 'Yesterday');
+    const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diffDays = Math.round((startOfDay(new Date()) - startOfDay(date)) / (1000 * 60 * 60 * 24));
+    if (diffDays <= 0) return translate('today', 'Today');
+    if (diffDays === 1) return translate('yesterday', 'Yesterday');
     return `${diffDays} ${translate('daysAgo', 'days ago')}`;
   };
 
@@ -155,7 +152,7 @@ const ForumSection = () => {
           </p>
         </div>
         <button
-          onClick={() => setShowCreatePost(true)}
+          onClick={() => { if (requireLogin()) setShowCreatePost(true); }}
           className="bg-primary-600 text-white px-6 py-3 rounded-lg hover:bg-primary-700 transition-colors flex items-center gap-2"
         >
           <FaPlus />
@@ -260,13 +257,20 @@ const ForumSection = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+                  disabled={submitting}
+                  className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:bg-gray-400"
                 >
                   {translate('post', 'Post')}
                 </button>
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {(loadError || actionError) && (
+        <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-lg" role="alert">
+          {loadError || actionError}
         </div>
       )}
 
@@ -315,22 +319,41 @@ const ForumSection = () => {
 
               {/* Post Actions */}
               <div className="flex items-center gap-6 pt-4 border-t">
-                <button className="flex items-center gap-2 text-gray-600 hover:text-primary-600">
+                <button onClick={() => handleLike(post.id)} aria-label="Like post" className="flex items-center gap-2 text-gray-600 hover:text-primary-600">
                   <FaThumbsUp />
                   <span>{post.likes}</span>
                 </button>
-                <button className="flex items-center gap-2 text-gray-600 hover:text-primary-600">
+                <button
+                  onClick={() => { setOpenComments(openComments === post.id ? null : post.id); setCommentText(''); }}
+                  aria-label="Show comments"
+                  className="flex items-center gap-2 text-gray-600 hover:text-primary-600"
+                >
                   <FaComment />
                   <span>{post.comments}</span>
                 </button>
               </div>
 
-              {/* Sample Reply */}
-              {post.replies && post.replies.length > 0 && (
-                <div className="mt-4 ml-8 p-4 bg-gray-50 rounded-lg">
-                  <p className="text-sm font-medium text-gray-700">{post.replies[0].author}</p>
-                  <p className="text-sm text-gray-600 mt-1">{post.replies[0].content}</p>
+              {/* Replies: first one always, all when expanded */}
+              {(openComments === post.id ? post.replies : post.replies.slice(0, 1)).map((reply) => (
+                <div key={reply.id} className="mt-4 ml-8 p-4 bg-gray-50 rounded-lg">
+                  <p className="text-sm font-medium text-gray-700">{reply.author}</p>
+                  <p className="text-sm text-gray-600 mt-1">{reply.content}</p>
                 </div>
+              ))}
+
+              {openComments === post.id && (
+                <form onSubmit={(e) => handleComment(e, post.id)} className="mt-4 ml-8 flex gap-2">
+                  <input
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    placeholder={user ? translate('writeComment', 'Write a reply…') : translate('loginToComment', 'Log in to reply')}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                    maxLength={2000}
+                  />
+                  <button type="submit" className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700">
+                    {translate('reply', 'Reply')}
+                  </button>
+                </form>
               )}
             </div>
           ))

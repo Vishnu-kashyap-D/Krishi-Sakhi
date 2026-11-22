@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Circle, useMapEvents } from 'react-leaflet';
+import React, { useRef } from 'react';
+import { MapContainer, TileLayer, LayersControl, Marker, Circle, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -44,17 +44,30 @@ const MapComponent = ({ selectedLocation, farmArea, onLocationSelect }) => {
   };
 
   return (
-    <div className="h-full w-full rounded-xl overflow-hidden">
+    <div className="relative h-full w-full rounded-xl overflow-hidden">
       <MapContainer
         center={keralaCenter}
         zoom={8}
         style={{ height: '100%', width: '100%' }}
         ref={mapRef}
       >
-        <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        />
+        {/* Key-free tile sources (the previous CARTO tiles now require an API key). */}
+        <LayersControl position="topright">
+          <LayersControl.BaseLayer checked name="Map">
+            <TileLayer
+              url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+              maxZoom={19}
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            />
+          </LayersControl.BaseLayer>
+          <LayersControl.BaseLayer name="Satellite">
+            <TileLayer
+              url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+              maxZoom={19}
+              attribution="Tiles &copy; Esri, Maxar, Earthstar Geographics"
+            />
+          </LayersControl.BaseLayer>
+        </LayersControl>
         
         <MapEvents onLocationSelect={onLocationSelect} />
         
@@ -79,7 +92,7 @@ const MapComponent = ({ selectedLocation, farmArea, onLocationSelect }) => {
       </MapContainer>
       
       {!selectedLocation && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="absolute inset-0 z-[1000] flex items-center justify-center pointer-events-none">
           <div className="bg-black bg-opacity-50 text-white px-4 py-2 rounded-lg">
             <p className="text-sm font-medium">🗺️ Click on the map to select your farm location</p>
           </div>

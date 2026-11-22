@@ -1,407 +1,180 @@
-// Try to import models, but don't fail if they don't exist
-let Product, User;
-try {
-  Product = require('../models/Product');
-} catch (error) {
-  console.warn('Product model not available, using mock data');
-  Product = null;
-}
-try {
-  User = require('../models/User');
-} catch (error) {
-  console.warn('User model not available, using mock data');
-  User = null;
-}
+const { Op, ValidationError } = require('sequelize');
+const { Product, User } = require('../models');
 
-// Get all products with filtering and pagination
+const SORT_FIELDS = { created_at: 'created_at', price: 'price', title: 'title', views: 'views' };
+const EDITABLE_FIELDS = ['title', 'description', 'category', 'subCategory', 'price', 'unit', 'quantity',
+  'minOrderQuantity', 'images', 'location', 'isNegotiable', 'status', 'tags'];
+
+const toPublic = (p) => {
+  const json = p.toJSON();
+  const seller = json.seller
+    ? { id: json.seller.id, name: json.seller.name, location: json.seller.location, phone: json.seller.phone || null }
+    : { id: null, name: json.sellerName || 'Krishi Sakhi seller', location: json.location };
+  delete json.sellerName;
+  return { ...json, seller };
+};
+
+const includeSeller = [{ model: User, as: 'seller', attributes: ['id', 'name', 'location', 'phone'] }];
+
+const validationMessage = (error) => error.errors.map((e) => e.message).join(', ');
+
 const getProducts = async (req, res) => {
   try {
-    const {
-      page = 1,
-      limit = 20,
-      category,
-      search,
-      location,
-      minPrice,
-      maxPrice,
-      sortBy = 'created_at',
-      sortOrder = 'DESC'
-    } = req.query;
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const { category, search, location, minPrice, maxPrice } = req.query;
+    const sortBy = SORT_FIELDS[req.query.sortBy] || 'created_at';
+    const sortOrder = String(req.query.sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
-    // Mock data for now - replace with actual database queries when Product model is ready
-    const mockProducts = [
-      {
-        id: 1,
-        title: 'Organic Rice Seeds - Kerala Red Rice',
-        description: 'Premium quality organic red rice seeds, suitable for Kerala climate. High yield variety.',
-        category: 'seeds',
-        price: 150,
-        unit: 'kg',
-        quantity: 100,
-        seller: {
-          id: 1,
-          name: 'Ravi Kumar',
-          location: { district: 'Thrissur', state: 'Kerala' }
-        },
-        images: [
-          { url: '/images/red-rice-seeds.jpg', alt: 'Red rice seeds' }
-        ],
-        location: { district: 'Thrissur', state: 'Kerala' },
-        isNegotiable: true,
-        created_at: new Date('2024-01-15')
-      },
-      {
-        id: 2,
-        title: 'NPK Fertilizer 19-19-19',
-        description: 'Balanced NPK fertilizer suitable for all crops. Increases yield and plant health.',
-        category: 'fertilizers',
-        price: 450,
-        unit: 'packet',
-        quantity: 50,
-        seller: {
-          id: 2,
-          name: 'Agri Store Palakkad',
-          location: { district: 'Palakkad', state: 'Kerala' }
-        },
-        images: [
-          { url: '/images/npk-fertilizer.jpg', alt: 'NPK Fertilizer' }
-        ],
-        location: { district: 'Palakkad', state: 'Kerala' },
-        isNegotiable: false,
-        created_at: new Date('2024-01-10')
-      },
-      {
-        id: 3,
-        title: 'Fresh Coconuts - Grade A',
-        description: 'Premium quality fresh coconuts from coastal Kerala. Perfect for oil extraction.',
-        category: 'crops',
-        price: 25,
-        unit: 'piece',
-        quantity: 500,
-        seller: {
-          id: 3,
-          name: 'Coconut Farmer Kollam',
-          location: { district: 'Kollam', state: 'Kerala' }
-        },
-        images: [
-          { url: '/images/coconuts.jpg', alt: 'Fresh Coconuts' }
-        ],
-        location: { district: 'Kollam', state: 'Kerala' },
-        isNegotiable: true,
-        created_at: new Date('2024-01-20')
-      }
-    ];
-
-    // Apply filters
-    let filteredProducts = mockProducts;
-
-    if (category) {
-      filteredProducts = filteredProducts.filter(p => p.category === category);
-    }
-
+    // ?mine=true lists the logged-in seller's own listings (any status).
+    const mine = req.query.mine === 'true' && req.user;
+    const where = mine ? { sellerId: req.user.id } : { status: 'active' };
+    if (category) where.category = category;
     if (search) {
-      const searchLower = search.toLowerCase();
-      filteredProducts = filteredProducts.filter(p => 
-        p.title.toLowerCase().includes(searchLower) ||
-        p.description.toLowerCase().includes(searchLower)
-      );
+      where[Op.or] = [
+        { title: { [Op.like]: `%${search}%` } },
+        { description: { [Op.like]: `%${search}%` } }
+      ];
     }
+    const price = {};
+    if (minPrice !== undefined && minPrice !== '' && Number.isFinite(Number(minPrice))) price[Op.gte] = Number(minPrice);
+    if (maxPrice !== undefined && maxPrice !== '' && Number.isFinite(Number(maxPrice))) price[Op.lte] = Number(maxPrice);
+    if (Object.getOwnPropertySymbols(price).length) where.price = price;
 
-    if (minPrice) {
-      filteredProducts = filteredProducts.filter(p => p.price >= parseFloat(minPrice));
+    let { rows, count } = await Product.findAndCountAll({
+      where,
+      include: includeSeller,
+      order: [[sortBy, sortOrder]],
+      limit: location ? undefined : limit,
+      offset: location ? undefined : (page - 1) * limit
+    });
+
+    // Location is stored as JSON, so it is filtered after the query.
+    if (location) {
+      const needle = String(location).toLowerCase();
+      rows = rows.filter((p) => JSON.stringify(p.location || {}).toLowerCase().includes(needle));
+      count = rows.length;
+      rows = rows.slice((page - 1) * limit, page * limit);
     }
-
-    if (maxPrice) {
-      filteredProducts = filteredProducts.filter(p => p.price <= parseFloat(maxPrice));
-    }
-
-    // Apply pagination
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-    const paginatedProducts = filteredProducts.slice(offset, offset + parseInt(limit));
 
     res.json({
       success: true,
       data: {
-        products: paginatedProducts,
+        products: rows.map(toPublic),
         pagination: {
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(filteredProducts.length / parseInt(limit)),
-          totalProducts: filteredProducts.length,
-          productsPerPage: parseInt(limit)
+          currentPage: page,
+          totalPages: Math.max(1, Math.ceil(count / limit)),
+          totalProducts: count,
+          productsPerPage: limit
         },
-        filters: {
-          category,
-          search,
-          location,
-          priceRange: { min: minPrice, max: maxPrice }
-        }
+        filters: { category, search, location, priceRange: { min: minPrice, max: maxPrice } }
       }
     });
-
   } catch (error) {
     console.error('Get products error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch products',
-      details: error.message
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch products' });
   }
 };
 
-// Get product by ID
 const getProductById = async (req, res) => {
   try {
-    const { id } = req.params;
-
-    // Mock data - replace with actual database query
-    const mockProduct = {
-      id: parseInt(id),
-      title: 'Organic Rice Seeds - Kerala Red Rice',
-      description: 'Premium quality organic red rice seeds, suitable for Kerala climate. High yield variety with excellent nutritional value.',
-      category: 'seeds',
-      subCategory: 'rice-seeds',
-      price: 150,
-      unit: 'kg',
-      quantity: 100,
-      minOrderQuantity: 5,
-      seller: {
-        id: 1,
-        name: 'Ravi Kumar',
-        email: 'ravi@example.com',
-        phone: '+91 98765 43210',
-        location: { 
-          district: 'Thrissur', 
-          state: 'Kerala',
-          village: 'Kodungallur'
-        },
-        rating: 4.5,
-        totalSales: 156
-      },
-      images: [
-        { url: '/images/red-rice-seeds-1.jpg', alt: 'Red rice seeds pack' },
-        { url: '/images/red-rice-seeds-2.jpg', alt: 'Close up of seeds' }
-      ],
-      specifications: {
-        variety: 'Kerala Red Rice',
-        organicCertified: true,
-        certificationDetails: 'Certified by Kerala Organic Farmers Association',
-        harvestDate: '2024-01-01'
-      },
-      location: { 
-        district: 'Thrissur', 
-        state: 'Kerala',
-        coordinates: { lat: 10.5276, lng: 76.2144 }
-      },
-      isNegotiable: true,
-      deliveryOptions: {
-        pickup: true,
-        delivery: true,
-        maxDeliveryDistance: 50,
-        deliveryCharge: 100
-      },
-      views: 89,
-      favorites: 12,
-      status: 'active',
-      created_at: new Date('2024-01-15'),
-      updated_at: new Date('2024-01-15')
-    };
-
-    res.json({
-      success: true,
-      data: {
-        product: mockProduct
-      }
-    });
-
+    const product = await Product.findByPk(req.params.id, { include: includeSeller });
+    if (!product) return res.status(404).json({ success: false, error: 'Product not found' });
+    await product.increment('views');
+    res.json({ success: true, data: { product: toPublic(product) } });
   } catch (error) {
     console.error('Get product error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch product',
-      details: error.message
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch product' });
   }
 };
 
-// Create new product
+const pickFields = (body) => {
+  const data = {};
+  for (const f of EDITABLE_FIELDS) if (body[f] !== undefined) data[f] = body[f];
+  return data;
+};
+
 const createProduct = async (req, res) => {
   try {
-    const {
-      title,
-      description,
-      category,
-      subCategory,
-      price,
-      unit,
-      quantity,
-      minOrderQuantity,
-      images,
-      specifications,
-      location,
-      isNegotiable,
-      deliveryOptions,
-      tags
-    } = req.body;
-
-    // Validation
-    if (!title || !description || !category || !price || !unit || !quantity) {
-      return res.status(400).json({
-        error: 'Required fields: title, description, category, price, unit, quantity'
-      });
+    const data = pickFields(req.body || {});
+    const missing = ['title', 'description', 'category', 'price', 'unit', 'quantity'].filter((f) => data[f] === undefined || data[f] === '');
+    if (missing.length) {
+      return res.status(400).json({ success: false, error: `Missing required fields: ${missing.join(', ')}` });
     }
-
-    // Mock product creation
-    const newProduct = {
-      id: Date.now(), // Mock ID
-      title: title.trim(),
-      description: description.trim(),
-      category,
-      subCategory,
-      price: parseFloat(price),
-      unit,
-      quantity: parseInt(quantity),
-      minOrderQuantity: minOrderQuantity || 1,
-      seller: {
-        id: req.user?.id || 1,
-        name: req.user?.name || 'Test User'
-      },
-      images: images || [],
-      specifications: specifications || {},
-      location: location || {},
-      isNegotiable: isNegotiable !== false,
-      deliveryOptions: deliveryOptions || {
-        pickup: true,
-        delivery: false
-      },
-      tags: tags || [],
+    const product = await Product.create({
+      ...data,
+      price: Number(data.price),
+      quantity: Number(data.quantity),
+      location: data.location || req.user.location || {},
       status: 'active',
-      views: 0,
-      favorites: 0,
-      created_at: new Date(),
-      updated_at: new Date()
-    };
-
-    res.status(201).json({
-      success: true,
-      data: {
-        product: newProduct
-      },
-      message: 'Product created successfully'
+      sellerId: req.user.id
     });
-
+    await product.reload({ include: includeSeller });
+    res.status(201).json({ success: true, data: { product: toPublic(product) }, message: 'Product created successfully' });
   } catch (error) {
+    if (error instanceof ValidationError) {
+      return res.status(400).json({ success: false, error: validationMessage(error) });
+    }
     console.error('Create product error:', error);
-    res.status(500).json({
-      error: 'Failed to create product',
-      details: error.message
-    });
+    res.status(500).json({ success: false, error: 'Failed to create product' });
   }
 };
 
-// Update product
+const loadOwnedProduct = async (req, res) => {
+  const product = await Product.findByPk(req.params.id);
+  if (!product) {
+    res.status(404).json({ success: false, error: 'Product not found' });
+    return null;
+  }
+  if (product.sellerId !== req.user.id && req.user.role !== 'admin') {
+    res.status(403).json({ success: false, error: 'You can only change your own listings' });
+    return null;
+  }
+  return product;
+};
+
 const updateProduct = async (req, res) => {
   try {
-    const { id } = req.params;
-    const updateData = req.body;
-
-    // Mock update
-    const updatedProduct = {
-      id: parseInt(id),
-      ...updateData,
-      updated_at: new Date()
-    };
-
-    res.json({
-      success: true,
-      data: {
-        product: updatedProduct
-      },
-      message: 'Product updated successfully'
-    });
-
+    const product = await loadOwnedProduct(req, res);
+    if (!product) return;
+    await product.update(pickFields(req.body || {}));
+    await product.reload({ include: includeSeller });
+    res.json({ success: true, data: { product: toPublic(product) }, message: 'Product updated successfully' });
   } catch (error) {
+    if (error instanceof ValidationError) {
+      return res.status(400).json({ success: false, error: validationMessage(error) });
+    }
     console.error('Update product error:', error);
-    res.status(500).json({
-      error: 'Failed to update product',
-      details: error.message
-    });
+    res.status(500).json({ success: false, error: 'Failed to update product' });
   }
 };
 
-// Delete product
 const deleteProduct = async (req, res) => {
   try {
-    const { id } = req.params;
-
-    // Mock deletion
-    res.json({
-      success: true,
-      message: 'Product deleted successfully'
-    });
-
+    const product = await loadOwnedProduct(req, res);
+    if (!product) return;
+    await product.destroy();
+    res.json({ success: true, message: 'Product deleted successfully' });
   } catch (error) {
     console.error('Delete product error:', error);
-    res.status(500).json({
-      error: 'Failed to delete product',
-      details: error.message
-    });
+    res.status(500).json({ success: false, error: 'Failed to delete product' });
   }
 };
 
-// Get product categories
+const CATEGORY_INFO = [
+  { id: 'seeds', name: 'Seeds', subcategories: [{ id: 'rice-seeds', name: 'Rice Seeds' }, { id: 'vegetable-seeds', name: 'Vegetable Seeds' }, { id: 'fruit-seeds', name: 'Fruit Seeds' }] },
+  { id: 'fertilizers', name: 'Fertilizers', subcategories: [{ id: 'organic', name: 'Organic Fertilizers' }, { id: 'chemical', name: 'Chemical Fertilizers' }, { id: 'npk', name: 'NPK Fertilizers' }] },
+  { id: 'pesticides', name: 'Pesticides', subcategories: [] },
+  { id: 'tools', name: 'Tools & Equipment', subcategories: [{ id: 'hand-tools', name: 'Hand Tools' }, { id: 'irrigation', name: 'Irrigation Equipment' }] },
+  { id: 'machinery', name: 'Machinery', subcategories: [] },
+  { id: 'crops', name: 'Fresh Produce', subcategories: [{ id: 'vegetables', name: 'Vegetables' }, { id: 'fruits', name: 'Fruits' }, { id: 'grains', name: 'Grains' }] },
+  { id: 'organic', name: 'Organic Products', subcategories: [] },
+  { id: 'dairy', name: 'Dairy', subcategories: [] },
+  { id: 'livestock', name: 'Livestock', subcategories: [] }
+];
+
 const getCategories = async (req, res) => {
-  try {
-    const categories = [
-      {
-        id: 'seeds',
-        name: 'Seeds',
-        subcategories: [
-          { id: 'rice-seeds', name: 'Rice Seeds' },
-          { id: 'vegetable-seeds', name: 'Vegetable Seeds' },
-          { id: 'fruit-seeds', name: 'Fruit Seeds' }
-        ]
-      },
-      {
-        id: 'fertilizers',
-        name: 'Fertilizers',
-        subcategories: [
-          { id: 'organic', name: 'Organic Fertilizers' },
-          { id: 'chemical', name: 'Chemical Fertilizers' },
-          { id: 'npk', name: 'NPK Fertilizers' }
-        ]
-      },
-      {
-        id: 'tools',
-        name: 'Tools & Equipment',
-        subcategories: [
-          { id: 'hand-tools', name: 'Hand Tools' },
-          { id: 'machinery', name: 'Machinery' },
-          { id: 'irrigation', name: 'Irrigation Equipment' }
-        ]
-      },
-      {
-        id: 'crops',
-        name: 'Fresh Produce',
-        subcategories: [
-          { id: 'vegetables', name: 'Vegetables' },
-          { id: 'fruits', name: 'Fruits' },
-          { id: 'grains', name: 'Grains' }
-        ]
-      }
-    ];
-
-    res.json({
-      success: true,
-      data: {
-        categories
-      }
-    });
-
-  } catch (error) {
-    console.error('Get categories error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch categories',
-      details: error.message
-    });
-  }
+  res.json({ success: true, data: { categories: CATEGORY_INFO, units: Product.UNITS } });
 };
 
 module.exports = {

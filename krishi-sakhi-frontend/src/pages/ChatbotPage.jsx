@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { geminiAPI } from '../api/gemini';
+import { chatAPI } from '../api/services';
+import { getErrorMessage } from '../api/client';
 import ChatMessage from '../components/ChatMessage';
 import ChatInput from '../components/ChatInput';
 import PopularQuestions from '../components/PopularQuestions';
@@ -8,7 +9,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FaRobot, FaSpinner, FaKeyboard, FaMicrophone } from 'react-icons/fa';
 
 const ChatbotPage = () => {
-  const { translate } = useLanguage();
+  const { translate, currentLanguage } = useLanguage();
   const [sessionId, setSessionId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -66,32 +67,19 @@ const ChatbotPage = () => {
     setError(null);
 
     try {
-      // Use Gemini API with conversation history
-      const response = await geminiAPI.sendMessage(messageText, messages);
-      
-      if (response.success) {
-        const botMessage = {
-          id: response.data.botMessage.id || `bot-${Date.now()}`,
-          type: 'bot',
-          message: response.data.botMessage.message,
-          created_at: response.data.botMessage.created_at,
-          metadata: response.data.botMessage.metadata,
-        };
-        setMessages((prev) => [...prev, botMessage]);
-      }
-    } catch (error) {
-      console.error('Failed to send message:', error);
-      setError(translate('responseError', 'Failed to get response. Please try again.'));
-      
-      // Add error message
-      const errorMessage = {
-        id: `error-${Date.now()}`,
+      // The backend keeps the conversation history for this session.
+      const response = await chatAPI.sendMessage(messageText, sessionId, { language: currentLanguage });
+      const bot = response.data.botMessage;
+      setSessionId(response.data.sessionId);
+      setMessages((prev) => [...prev, {
+        id: bot.id,
         type: 'bot',
-        message: translate('errorMessage', "I'm sorry, I'm having trouble responding right now. Please try again in a moment."),
-        created_at: new Date().toISOString(),
-        isError: true,
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+        message: bot.message,
+        created_at: bot.created_at,
+        metadata: bot.metadata,
+      }]);
+    } catch (err) {
+      setError(getErrorMessage(err, translate('responseError', 'Failed to get response. Please try again.')));
     } finally {
       setIsLoading(false);
     }
@@ -102,16 +90,13 @@ const ChatbotPage = () => {
   };
 
   const handleFeedback = async (messageId, helpful) => {
+    // Only messages saved by the server (numeric ids) can receive feedback.
+    if (typeof messageId !== 'number') return;
+    setMessages((prev) => prev.map((msg) => (msg.id === messageId ? { ...msg, feedbackSubmitted: true } : msg)));
     try {
-      // For now, just update the UI state
-      // In production, you would send this to your backend
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === messageId ? { ...msg, feedbackSubmitted: true } : msg
-        )
-      );
-    } catch (error) {
-      console.error('Failed to submit feedback:', error);
+      await chatAPI.updateFeedback(messageId, sessionId, { helpful });
+    } catch (err) {
+      console.error('Failed to submit feedback:', getErrorMessage(err));
     }
   };
 

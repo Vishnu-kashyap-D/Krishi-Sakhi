@@ -1,17 +1,21 @@
 const express = require('express');
-const router = express.Router();
+const rateLimit = require('express-rate-limit');
 const cropAnalysisController = require('../controllers/cropAnalysisController');
+const { authenticate, optionalAuth } = require('../middleware/auth');
 
-// Analyze crop image
-router.post('/analyze', cropAnalysisController.analyzeCropImage);
+const router = express.Router();
 
-// Get analysis history
-router.get('/history/:userId', cropAnalysisController.getAnalysisHistory);
+const analysisLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.CROP_ANALYSIS_RATE_LIMIT || 20),
+  message: { success: false, error: 'Too many image analyses, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
-// Get supported crop types
+router.post('/analyze', analysisLimiter, optionalAuth, cropAnalysisController.analyzeCropImage);
+router.get('/history', authenticate, cropAnalysisController.getAnalysisHistory);
 router.get('/supported-crops', cropAnalysisController.getSupportedCrops);
-
-// Get common diseases information
 router.get('/diseases', cropAnalysisController.getCommonDiseases);
 
 module.exports = router;

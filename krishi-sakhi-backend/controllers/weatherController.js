@@ -1,249 +1,120 @@
 const weatherService = require('../services/weatherService');
 
-// Get current weather for location
+// Parses and validates ?lat=&lon= (also accepts lng). Returns null after sending a 400.
+const parseCoords = (src, res, example) => {
+  const latRaw = src.lat;
+  const lonRaw = src.lon !== undefined ? src.lon : src.lng;
+  if (latRaw === undefined || lonRaw === undefined || latRaw === '' || lonRaw === '') {
+    res.status(400).json({ success: false, error: 'Latitude and longitude are required', example });
+    return null;
+  }
+  const lat = Number(latRaw);
+  const lon = Number(lonRaw);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    res.status(400).json({ success: false, error: 'Latitude and longitude must be valid numbers' });
+    return null;
+  }
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    res.status(400).json({ success: false, error: 'Latitude must be between -90 and 90 and longitude between -180 and 180' });
+    return null;
+  }
+  return { lat, lon };
+};
+
+const fail = (res, error, message) => {
+  const status = error.statusCode || 500;
+  console.error(message, error.cause ? error.cause.message : error.message);
+  res.status(status).json({ success: false, error: status === 500 ? message : error.message });
+};
+
 const getCurrentWeather = async (req, res) => {
+  const c = parseCoords(req.query, res, '/api/weather/current?lat=10.5276&lon=76.2144');
+  if (!c) return;
   try {
-    const { lat, lon } = req.query;
-
-    // Validation
-    if (!lat || !lon) {
-      return res.status(400).json({
-        error: 'Latitude and longitude are required',
-        example: '/api/weather/current?lat=10.5276&lon=76.2144'
-      });
-    }
-
-    const latitude = parseFloat(lat);
-    const longitude = parseFloat(lon);
-
-    if (isNaN(latitude) || isNaN(longitude)) {
-      return res.status(400).json({
-        error: 'Latitude and longitude must be valid numbers'
-      });
-    }
-
-    if (latitude < -90 || latitude > 90) {
-      return res.status(400).json({
-        error: 'Latitude must be between -90 and 90'
-      });
-    }
-
-    if (longitude < -180 || longitude > 180) {
-      return res.status(400).json({
-        error: 'Longitude must be between -180 and 180'
-      });
-    }
-
-    const weatherData = await weatherService.getWeatherData(latitude, longitude);
-
-    res.json({
-      success: true,
-      data: weatherData.data,
-      cached: weatherData.cached || false
-    });
-
+    const result = await weatherService.getWeatherData(c.lat, c.lon);
+    res.json({ success: true, data: result.data, cached: result.cached });
   } catch (error) {
-    console.error('Get current weather error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch weather data',
-      details: error.message
-    });
+    fail(res, error, 'Failed to fetch weather data');
   }
 };
 
-// Get weather forecast for location
 const getWeatherForecast = async (req, res) => {
+  const c = parseCoords(req.query, res, '/api/weather/forecast?lat=10.5276&lon=76.2144&days=7');
+  if (!c) return;
+  const days = Math.max(1, Math.min(parseInt(req.query.days, 10) || 7, 16));
   try {
-    const { lat, lon, days = 7 } = req.query;
-
-    // Validation
-    if (!lat || !lon) {
-      return res.status(400).json({
-        error: 'Latitude and longitude are required',
-        example: '/api/weather/forecast?lat=10.5276&lon=76.2144&days=7'
-      });
-    }
-
-    const latitude = parseFloat(lat);
-    const longitude = parseFloat(lon);
-    const forecastDays = Math.min(parseInt(days) || 7, 14); // Max 14 days
-
-    if (isNaN(latitude) || isNaN(longitude)) {
-      return res.status(400).json({
-        error: 'Latitude and longitude must be valid numbers'
-      });
-    }
-
-    const forecastData = await weatherService.getWeatherForecast(latitude, longitude, forecastDays);
-
-    res.json({
-      success: true,
-      data: forecastData.data,
-      requestedDays: forecastDays
-    });
-
+    const result = await weatherService.getWeatherForecast(c.lat, c.lon, days);
+    res.json({ success: true, data: result.data, requestedDays: days, cached: result.cached });
   } catch (error) {
-    console.error('Get weather forecast error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch weather forecast',
-      details: error.message
-    });
+    fail(res, error, 'Failed to fetch weather forecast');
   }
 };
 
-// Get agricultural weather insights
 const getAgricultureInsights = async (req, res) => {
+  const c = parseCoords(req.query, res, '/api/weather/agriculture?lat=10.5276&lon=76.2144&crop=rice');
+  if (!c) return;
   try {
-    const { lat, lon, crop } = req.query;
-
-    // Validation
-    if (!lat || !lon) {
-      return res.status(400).json({
-        error: 'Latitude and longitude are required',
-        example: '/api/weather/agriculture?lat=10.5276&lon=76.2144&crop=rice'
-      });
-    }
-
-    const latitude = parseFloat(lat);
-    const longitude = parseFloat(lon);
-
-    if (isNaN(latitude) || isNaN(longitude)) {
-      return res.status(400).json({
-        error: 'Latitude and longitude must be valid numbers'
-      });
-    }
-
-    const insights = await weatherService.getAgricultureWeatherInsights(
-      latitude, 
-      longitude, 
-      crop
-    );
-
-    res.json({
-      success: true,
-      data: insights.data,
-      crop: crop || 'general'
-    });
-
+    const insights = await weatherService.getAgricultureWeatherInsights(c.lat, c.lon, req.query.crop);
+    res.json({ success: true, data: insights.data, crop: req.query.crop || 'general' });
   } catch (error) {
-    console.error('Get agriculture insights error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch agriculture weather insights',
-      details: error.message
-    });
+    fail(res, error, 'Failed to fetch agriculture weather insights');
   }
 };
 
-// Get weather summary for multiple locations (useful for dashboard)
-const getWeatherSummary = async (req, res) => {
-  try {
-    const { locations } = req.body;
-
-    if (!locations || !Array.isArray(locations)) {
-      return res.status(400).json({
-        error: 'Locations array is required',
-        example: {
-          locations: [
-            { name: 'Thrissur', lat: 10.5276, lon: 76.2144 },
-            { name: 'Kochi', lat: 9.9312, lon: 76.2673 }
-          ]
-        }
-      });
-    }
-
-    if (locations.length > 10) {
-      return res.status(400).json({
-        error: 'Maximum 10 locations allowed per request'
-      });
-    }
-
-    const summaries = await Promise.all(
-      locations.map(async (location) => {
-        try {
-          const { lat, lon, name } = location;
-          
-          if (!lat || !lon) {
-            return {
-              location: name || 'Unknown',
-              error: 'Missing coordinates'
-            };
-          }
-
-          const weatherData = await weatherService.getWeatherData(lat, lon);
-          
-          return {
-            location: name || `${lat}, ${lon}`,
-            coordinates: { lat, lon },
-            weather: {
-              temperature: weatherData.data.current.temperature,
-              condition: weatherData.data.current.condition,
-              humidity: weatherData.data.current.humidity,
-              precipitation: weatherData.data.daily[0]?.precipitation
-            },
-            agriculture: {
-              soilMoisture: weatherData.data.agriculture.soilMoisture,
-              recommendation: weatherData.data.agriculture.recommendations[0]?.message || 'No specific recommendations'
-            }
-          };
-        } catch (error) {
-          return {
-            location: location.name || 'Unknown',
-            error: error.message
-          };
-        }
-      })
-    );
-
-    res.json({
-      success: true,
-      data: {
-        summaries,
-        timestamp: new Date()
-      }
-    });
-
-  } catch (error) {
-    console.error('Get weather summary error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch weather summary',
-      details: error.message
-    });
-  }
-};
-
-// Get weather alerts for region
 const getWeatherAlerts = async (req, res) => {
+  const c = parseCoords(req.query, res, '/api/weather/alerts?lat=10.5276&lon=76.2144');
+  if (!c) return;
   try {
-    const { lat, lon, radius = 50 } = req.query;
-
-    if (!lat || !lon) {
-      return res.status(400).json({
-        error: 'Latitude and longitude are required'
-      });
-    }
-
-    const latitude = parseFloat(lat);
-    const longitude = parseFloat(lon);
-
-    const weatherData = await weatherService.getWeatherData(latitude, longitude);
-
+    const { data } = await weatherService.getWeatherData(c.lat, c.lon);
     res.json({
       success: true,
-      data: {
-        location: weatherData.data.location,
-        alerts: weatherData.data.alerts,
-        radius: parseInt(radius),
-        lastUpdated: weatherData.data.source.lastUpdated
-      }
+      data: { location: data.location, alerts: data.alerts, lastUpdated: data.source.lastUpdated, note: data.source.alertsNote }
     });
-
   } catch (error) {
-    console.error('Get weather alerts error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch weather alerts',
-      details: error.message
+    fail(res, error, 'Failed to fetch weather alerts');
+  }
+};
+
+const getWeatherSummary = async (req, res) => {
+  const { locations } = req.body || {};
+  if (!Array.isArray(locations) || locations.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Locations array is required',
+      example: { locations: [{ name: 'Thrissur', lat: 10.5276, lon: 76.2144 }] }
     });
   }
+  if (locations.length > 10) {
+    return res.status(400).json({ success: false, error: 'Maximum 10 locations allowed per request' });
+  }
+
+  const summaries = await Promise.all(locations.map(async (loc) => {
+    const lat = Number(loc && loc.lat);
+    const lon = Number(loc && (loc.lon !== undefined ? loc.lon : loc.lng));
+    const name = (loc && loc.name) || `${lat}, ${lon}`;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return { location: name, error: 'Missing or invalid coordinates' };
+    try {
+      const { data } = await weatherService.getWeatherData(lat, lon);
+      return {
+        location: name,
+        coordinates: { lat, lon },
+        weather: {
+          temperature: data.current.temperature,
+          condition: data.current.condition,
+          humidity: data.current.humidity,
+          precipitation: data.daily[0] ? data.daily[0].precipitation : null
+        },
+        agriculture: {
+          soilMoisture: data.agriculture.soilMoisture,
+          recommendation: data.agriculture.recommendations[0] ? data.agriculture.recommendations[0].message : null
+        }
+      };
+    } catch (error) {
+      return { location: name, error: error.message };
+    }
+  }));
+
+  res.json({ success: true, data: { summaries, timestamp: new Date() } });
 };
 
 module.exports = {

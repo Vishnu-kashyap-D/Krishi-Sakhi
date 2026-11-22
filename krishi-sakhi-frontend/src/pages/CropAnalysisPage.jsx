@@ -1,7 +1,10 @@
 import React, { useState, useRef } from 'react';
 import { FaCamera, FaUpload, FaLeaf, FaChartLine, FaBug, FaCheckCircle, FaExclamationTriangle, FaTimes, FaRedo } from 'react-icons/fa';
 import { useLanguage } from '../context/LanguageContext';
-import axios from 'axios';
+import { cropAnalysisAPI } from '../api/services';
+import { getErrorMessage } from '../api/client';
+
+const SUPPORTED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
 
 const CropAnalysisPage = () => {
   const { translate } = useLanguage();
@@ -12,6 +15,7 @@ const CropAnalysisPage = () => {
   const [error, setError] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
 
   // Handle drag events
   const handleDrag = (e) => {
@@ -37,7 +41,7 @@ const CropAnalysisPage = () => {
 
   // Handle file selection
   const handleFile = (file) => {
-    if (file && file.type.startsWith('image/')) {
+    if (file && SUPPORTED_TYPES.includes(file.type)) {
       if (file.size > 10 * 1024 * 1024) { // 10MB limit
         setError('File size too large. Please select an image under 10MB.');
         return;
@@ -54,7 +58,7 @@ const CropAnalysisPage = () => {
       };
       reader.readAsDataURL(file);
     } else {
-      setError('Please select a valid image file (JPG, PNG, etc.)');
+      setError('Please select a JPG, PNG, WEBP or HEIC image.');
     }
   };
 
@@ -66,100 +70,19 @@ const CropAnalysisPage = () => {
   };
 
   const analyzeImage = async () => {
-    if (!selectedImage) return;
-    
+    if (!selectedImage || loading) return;
     setLoading(true);
     setError(null);
-    
-    const formData = new FormData();
-    formData.append('image', selectedImage);
-    formData.append('cropType', 'auto-detect'); // Can be made user-selectable
-    
+    setAnalysisResult(null);
     try {
-      const response = await axios.post(
-        'http://localhost:3001/api/crop-analysis/analyze',
-        formData,
-        {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        }
-      );
-      
-      if (response.data.success) {
-        setAnalysisResult(response.data.data);
-      } else {
-        throw new Error(response.data.error || 'Analysis failed');
-      }
+      const response = await cropAnalysisAPI.analyzeImage(selectedImage, 'auto-detect');
+      setAnalysisResult(response.data);
     } catch (err) {
-      console.error('Crop analysis error:', err);
-      setError('Failed to analyze image. Please try again.');
-      
-      // Mock data for demo
-      setTimeout(() => {
-        setAnalysisResult(getMockAnalysisResult());
-        setError(null);
-      }, 2000);
+      setError(getErrorMessage(err, 'Failed to analyze image. Please try again.'));
     } finally {
       setLoading(false);
     }
   };
-
-  const getMockAnalysisResult = () => ({
-    cropInfo: {
-      type: 'Tomato',
-      variety: 'Cherry Tomato',
-      growthStage: 'Fruiting',
-      confidence: 0.92
-    },
-    healthScore: 85,
-    qualityGrade: 'A',
-    issues: [
-      {
-        type: 'disease',
-        name: 'Early Blight',
-        severity: 'Low',
-        confidence: 0.78,
-        affectedArea: '12%'
-      },
-      {
-        type: 'nutrient',
-        name: 'Nitrogen Deficiency',
-        severity: 'Medium',
-        confidence: 0.65,
-        symptoms: 'Slight yellowing of lower leaves'
-      }
-    ],
-    recommendations: [
-      {
-        category: 'treatment',
-        priority: 'high',
-        action: 'Apply fungicide for Early Blight',
-        details: 'Use copper-based fungicide, spray every 7-10 days',
-        timeline: 'Immediate'
-      },
-      {
-        category: 'nutrition',
-        priority: 'medium',
-        action: 'Apply nitrogen-rich fertilizer',
-        details: 'Use urea or ammonium sulfate at 50kg/acre',
-        timeline: 'Within 3 days'
-      },
-      {
-        category: 'care',
-        priority: 'low',
-        action: 'Improve air circulation',
-        details: 'Prune lower branches to improve airflow',
-        timeline: 'This week'
-      }
-    ],
-    marketInfo: {
-      currentPrice: '₹45/kg',
-      pricetrend: 'increasing',
-      optimalHarvestTime: '7-10 days',
-      expectedYield: '85%'
-    }
-  });
 
   const resetAnalysis = () => {
     setSelectedImage(null);
@@ -246,10 +169,7 @@ const CropAnalysisPage = () => {
                       <FaUpload /> Choose File
                     </button>
                     <button
-                      onClick={() => {
-                        // TODO: Implement camera capture
-                        alert('Camera feature coming soon!');
-                      }}
+                      onClick={() => cameraInputRef.current?.click()}
                       className="bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-2"
                     >
                       <FaCamera /> Take Photo
@@ -257,7 +177,7 @@ const CropAnalysisPage = () => {
                   </div>
                   
                   <p className="text-xs text-gray-500">
-                    Supported formats: JPG, PNG, GIF (Max 10MB)
+                    Supported formats: JPG, PNG, WEBP, HEIC (max 10 MB)
                   </p>
                 </div>
               </div>
@@ -313,7 +233,16 @@ const CropAnalysisPage = () => {
             <input
               ref={fileInputRef}
               type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+              onChange={handleFileInput}
+              className="hidden"
+            />
+            {/* Opens the rear camera on phones; falls back to a file picker on desktop. */}
+            <input
+              ref={cameraInputRef}
+              type="file"
               accept="image/*"
+              capture="environment"
               onChange={handleFileInput}
               className="hidden"
             />
@@ -406,7 +335,16 @@ const CropAnalysisPage = () => {
                     <p className="text-lg font-semibold">{(analysisResult.cropInfo.confidence * 100).toFixed(0)}%</p>
                   </div>
                 </div>
+                {analysisResult.summary && (
+                  <p className="mt-4 text-gray-700">{analysisResult.summary}</p>
+                )}
               </div>
+
+              {analysisResult.issues.length === 0 && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-center gap-3 text-green-800">
+                  <FaCheckCircle /> No visible problems were detected in this photo.
+                </div>
+              )}
 
               {/* Detected Issues */}
               {analysisResult.issues.length > 0 && (
@@ -458,28 +396,9 @@ const CropAnalysisPage = () => {
                 </div>
               </div>
 
-              {/* Market Info */}
-              <div className="bg-gradient-to-r from-green-50 to-green-100 rounded-xl p-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4">Market Information</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-white rounded-lg p-3">
-                    <p className="text-sm text-gray-600">Current Price</p>
-                    <p className="text-lg font-semibold text-green-700">{analysisResult.marketInfo.currentPrice}</p>
-                  </div>
-                  <div className="bg-white rounded-lg p-3">
-                    <p className="text-sm text-gray-600">Price Trend</p>
-                    <p className="text-lg font-semibold capitalize">{analysisResult.marketInfo.pricetrend} ↗</p>
-                  </div>
-                  <div className="bg-white rounded-lg p-3">
-                    <p className="text-sm text-gray-600">Optimal Harvest</p>
-                    <p className="text-lg font-semibold">{analysisResult.marketInfo.optimalHarvestTime}</p>
-                  </div>
-                  <div className="bg-white rounded-lg p-3">
-                    <p className="text-sm text-gray-600">Expected Yield</p>
-                    <p className="text-lg font-semibold">{analysisResult.marketInfo.expectedYield}</p>
-                  </div>
-                </div>
-              </div>
+              {analysisResult.analysisMetadata?.disclaimer && (
+                <p className="text-xs text-gray-500 px-1">{analysisResult.analysisMetadata.disclaimer}</p>
+              )}
             </div>
           )}
         </div>

@@ -1,9 +1,11 @@
 // routes/analysisRoutes.js
 const express = require('express');
-const router = express.Router();
 const analysisController = require('../controllers/analysisController');
+const { authenticate, optionalAuth } = require('../middleware/auth');
 
-// Define the main analysis endpoint
-router.post('/', analysisController.getFarmAnalysis);
+const router = express.Router();
+
+router.post('/', optionalAuth, analysisController.getFarmAnalysis);
+router.get('/history', authenticate, analysisController.getAnalysisHistory);
 
 module.exports = router;

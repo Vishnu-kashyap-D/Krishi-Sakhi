@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FaGlobe, FaChevronDown } from 'react-icons/fa';
+import { languageAPI } from '../api/services';
 
 const LanguageSwitcher = ({ currentLanguage = 'en', onLanguageChange }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -26,8 +27,7 @@ const LanguageSwitcher = ({ currentLanguage = 'en', onLanguageChange }) => {
 
   const fetchLanguages = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/languages');
-      const data = await response.json();
+      const data = await languageAPI.getLanguages();
       
       if (data.success) {
         const languageList = Object.entries(data.data.languages).map(([code, info]) => ({

@@ -1,139 +1,135 @@
 // controllers/analysisController.js
-const db = require('../config/db');
 const geoApiService = require('../services/geoApiService');
+const { FarmAnalysis } = require('../models/Analysis');
+
+const round = (v, d) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
+
+const generateRecommendations = (soil, landVeg, groundwater, climate) => {
+  const recs = [];
+  if (soil.ph < 5.5) {
+    recs.push({ type: 'soil', priority: 'high', message: `Soil is strongly acidic (pH ${round(soil.ph, 1)}). Apply agricultural lime (dolomite) as per a soil test, typically 1-2 tonnes per hectare.` });
+  } else if (soil.ph < 6.0) {
+    recs.push({ type: 'soil', priority: 'medium', message: `Soil is slightly acidic (pH ${round(soil.ph, 1)}). A light liming will improve nutrient availability for most crops.` });
+  } else if (soil.ph > 8.0) {
+    recs.push({ type: 'soil', priority: 'high', message: `Soil is alkaline (pH ${round(soil.ph, 1)}). Add gypsum and organic matter; choose tolerant crops such as barley or cotton.` });
+  }
+  if (soil.organic_carbon_percent < 0.5) {
+    recs.push({ type: 'soil', priority: 'high', message: 'Organic carbon is low. Add farmyard manure or compost (5-10 t/ha) and keep crop residues in the field.' });
+  }
+  if (soil.nutrient_levels.nitrogen === 'Low') {
+    recs.push({ type: 'nutrient', priority: 'high', message: 'Nitrogen is low. Apply compost or green manure, or split doses of urea as recommended for your crop.' });
+  }
+  if (soil.nutrient_levels.phosphorus === 'Low') {
+    recs.push({ type: 'nutrient', priority: 'medium', message: 'Phosphorus may be low. Consider DAP or single super phosphate at sowing (confirm with a soil test).' });
+  }
+  if (soil.nutrient_levels.potassium === 'Low') {
+    recs.push({ type: 'nutrient', priority: 'medium', message: 'Potassium may be low. Consider muriate of potash (MOP) as per a soil test.' });
+  }
+  if (groundwater.depth_meters > 30) {
+    recs.push({ type: 'water', priority: 'medium', message: 'Groundwater is likely deep. Use drip or sprinkler irrigation and harvest rainwater.' });
+  }
+  if (climate && climate.source === 'Open-Meteo') {
+    if (climate.rainfall_last_30_days_mm < 20 && climate.soil_moisture_percent != null && climate.soil_moisture_percent < 20) {
+      recs.push({ type: 'water', priority: 'high', message: `Only ${climate.rainfall_last_30_days_mm} mm of rain in the last 30 days and dry topsoil (${climate.soil_moisture_percent}%). Plan irrigation and mulch to save moisture.` });
+    } else if (climate.rainfall_last_30_days_mm > 300) {
+      recs.push({ type: 'water', priority: 'medium', message: `Heavy recent rainfall (${climate.rainfall_last_30_days_mm} mm in 30 days). Ensure field drainage to avoid waterlogging and root diseases.` });
+    }
+  }
+  if (landVeg.vegetation_index.ndvi < 0.35) {
+    recs.push({ type: 'crop', priority: 'low', message: 'Vegetation cover appears low. Consider a cover crop or green manure between seasons.' });
+  }
+  return recs;
+};
 
 const getFarmAnalysis = async (req, res) => {
-  const { latitude, longitude, acres, farmName } = req.body;
+  const { latitude, longitude, acres, farmName } = req.body || {};
 
-  // 1. Input Validation
-  if (!latitude || !longitude || !acres) {
-    return res.status(400).json({ 
-      error: 'Latitude, longitude, and acres are required.',
-      received: { latitude, longitude, acres }
-    });
+  if (latitude == null || longitude == null || acres == null || latitude === '' || longitude === '' || acres === '') {
+    return res.status(400).json({ success: false, error: 'Latitude, longitude, and acres are required.' });
   }
-
-  // Validate numeric values
-  const lat = parseFloat(latitude);
-  const lng = parseFloat(longitude);
-  const farmAcres = parseFloat(acres);
-
-  if (isNaN(lat) || isNaN(lng) || isNaN(farmAcres)) {
-    return res.status(400).json({ 
-      error: 'Latitude, longitude, and acres must be valid numbers.' 
-    });
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  const farmAcres = Number(acres);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(farmAcres)) {
+    return res.status(400).json({ success: false, error: 'Latitude, longitude, and acres must be valid numbers.' });
   }
-
-  // Validate coordinate ranges
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-    return res.status(400).json({ 
-      error: 'Invalid coordinates. Latitude must be between -90 and 90, longitude between -180 and 180.' 
-    });
+    return res.status(400).json({ success: false, error: 'Invalid coordinates. Latitude must be between -90 and 90, longitude between -180 and 180.' });
   }
-
   if (farmAcres <= 0 || farmAcres > 10000) {
-    return res.status(400).json({ 
-      error: 'Farm area must be between 0 and 10000 acres.' 
-    });
+    return res.status(400).json({ success: false, error: 'Farm area must be greater than 0 and at most 10000 acres.' });
   }
 
   try {
-    // 2. Save/Find the farm in the database (mock implementation)
-    let farmId = `farm_${Date.now()}`; // Mock farm ID
-    
-    // In production, this would be:
-    // let farmResult = await db.query(
-    //   'SELECT id FROM farms WHERE latitude = $1 AND longitude = $2 AND area_acres = $3',
-    //   [lat, lng, farmAcres]
-    // );
-    
-    console.log(`Processing analysis for farm: ${farmId}`);
-    console.log(`Location: ${lat}, ${lng} | Area: ${farmAcres} acres`);
-
-    // 3. Fetch data from all external services in parallel for efficiency
-    const [soilData, landVegData, groundwaterData] = await Promise.all([
+    const [soil, landVeg, groundwater, climate] = await Promise.all([
       geoApiService.fetchSoilData(lat, lng),
       geoApiService.fetchLandAndVegData(lat, lng),
       geoApiService.fetchGroundwaterData(lat, lng),
+      geoApiService.fetchClimateData(lat, lng)
     ]);
-    
-    // 4. Aggregate data into a unified report structure
-    const finalReport = {
-      farm_id: farmId,
-      farm_name: farmName || 'Unnamed Farm',
-      location: { 
-        latitude: lat, 
-        longitude: lng, 
-        acres: farmAcres 
-      },
-      land_cover: landVegData.land_cover,
-      vegetation_index: landVegData.vegetation_index,
+
+    const report = {
+      farm_name: (typeof farmName === 'string' && farmName.trim().slice(0, 100)) || 'Unnamed Farm',
+      location: { latitude: lat, longitude: lng, acres: farmAcres },
+      land_cover: landVeg.land_cover,
+      vegetation_index: landVeg.vegetation_index,
       soil_properties: {
-        texture: soilData.texture,
-        ph: parseFloat(soilData.ph.toFixed(1)),
-        organic_carbon_percent: parseFloat(soilData.organic_carbon_percent.toFixed(2)),
+        texture: soil.texture,
+        ph: round(soil.ph, 1),
+        organic_carbon_percent: round(soil.organic_carbon_percent, 2),
+        ...soil.composition
       },
-      nutrient_levels: soilData.nutrient_levels,
-      groundwater: groundwaterData,
+      nutrient_levels: soil.nutrient_levels,
+      groundwater: { depth_meters: groundwater.depth_meters, availability: groundwater.availability },
+      climate,
+      data_sources: {
+        soil: soil.source,
+        nutrients: soil.source === 'estimated' ? 'estimated' : 'nitrogen: SoilGrids; phosphorus/potassium: estimated',
+        land_cover: landVeg.source,
+        vegetation_index: landVeg.source,
+        groundwater: groundwater.source,
+        climate: climate.source
+      },
+      notes: [soil.note].filter(Boolean),
       analysis_timestamp: new Date().toISOString(),
-      recommendations: generateRecommendations(soilData, landVegData, groundwaterData)
+      recommendations: generateRecommendations(soil, landVeg, groundwater, climate)
     };
 
-    // 5. In production, cache the report in database
-    // await db.query(
-    //   'INSERT INTO analysis_reports (farm_id, report_data) VALUES ($1, $2)',
-    //   [farmId, finalReport]
-    // );
-
-    // 6. Send the final report to the client
-    res.status(200).json({
-      success: true,
-      data: finalReport
+    const saved = await FarmAnalysis.create({
+      userId: req.user ? req.user.id : null,
+      farmName: report.farm_name,
+      latitude: lat,
+      longitude: lng,
+      acres: farmAcres,
+      report
     });
 
+    res.status(200).json({ success: true, data: { farm_id: saved.id, ...report } });
   } catch (error) {
     console.error('Error during farm analysis:', error);
-    res.status(500).json({ 
-      error: 'An internal server error occurred.',
-      message: error.message 
-    });
+    res.status(500).json({ success: false, error: 'Farm analysis failed. Please try again.' });
   }
 };
 
-// Helper function to generate recommendations based on analysis
-const generateRecommendations = (soilData, landVegData, groundwaterData) => {
-  const recommendations = [];
-  
-  // Soil-based recommendations
-  if (soilData.ph < 6.0) {
-    recommendations.push({
-      type: 'soil',
-      priority: 'high',
-      message: 'Your soil is acidic. Consider adding lime to increase pH.'
+const getAnalysisHistory = async (req, res) => {
+  try {
+    const rows = await FarmAnalysis.findAll({
+      where: { userId: req.user.id },
+      order: [['created_at', 'DESC']],
+      limit: Math.min(parseInt(req.query.limit, 10) || 20, 100)
     });
-  }
-  
-  // Nutrient recommendations
-  if (soilData.nutrient_levels.nitrogen === 'Low') {
-    recommendations.push({
-      type: 'nutrient',
-      priority: 'high',
-      message: 'Low nitrogen levels detected. Apply organic compost or nitrogen-rich fertilizers.'
+    res.json({
+      success: true,
+      data: rows.map((r) => ({ id: r.id, farmName: r.farmName, latitude: r.latitude, longitude: r.longitude, acres: r.acres, createdAt: r.created_at, report: r.report }))
     });
+  } catch (error) {
+    console.error('Get farm analysis history error:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch analysis history' });
   }
-  
-  // Water recommendations
-  if (groundwaterData.depth_meters > 30) {
-    recommendations.push({
-      type: 'water',
-      priority: 'medium',
-      message: 'Deep groundwater table. Consider rainwater harvesting and drip irrigation.'
-    });
-  }
-  
-  return recommendations;
 };
 
 module.exports = {
   getFarmAnalysis,
+  getAnalysisHistory,
+  generateRecommendations
 };

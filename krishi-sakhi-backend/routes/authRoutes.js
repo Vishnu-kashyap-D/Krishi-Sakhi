@@ -1,33 +1,25 @@
 const express = require('express');
-const router = express.Router();
+const rateLimit = require('express-rate-limit');
 const authController = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
-const rateLimit = require('express-rate-limit');
 
-// Rate limiting for auth endpoints
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 requests per windowMs
-  message: {
-    error: 'Too many authentication attempts, please try again later.',
-  },
+const router = express.Router();
+
+// Limit brute-force attempts on the credential endpoints only.
+const credentialLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.AUTH_RATE_LIMIT || 20),
+  message: { error: 'Too many login attempts, please try again later.' },
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: false
 });
 
-// Apply rate limiting to auth routes
-router.use(authLimiter);
+router.post('/register', credentialLimiter, authController.register);
+router.post('/login', credentialLimiter, authController.login);
 
-// Public routes
-router.post('/register', authController.register);
-router.post('/login', authController.login);
-
-// Protected routes (require authentication)
-router.use(authenticate); // Apply authentication middleware to all routes below
-
-router.get('/profile', authController.getProfile);
-router.put('/profile', authController.updateProfile);
-router.put('/change-password', authController.changePassword);
-router.post('/logout', authController.logout);
+router.get('/profile', authenticate, authController.getProfile);
+router.put('/profile', authenticate, authController.updateProfile);
+router.put('/change-password', authenticate, credentialLimiter, authController.changePassword);
+router.post('/logout', authenticate, authController.logout);
 
 module.exports = router;

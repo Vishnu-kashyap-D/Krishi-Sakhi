@@ -1,7 +1,68 @@
 import React, { useState, useEffect } from 'react';
 import { FaCloudSun, FaUmbrella, FaTint, FaWind, FaThermometerHalf, FaCompass, FaEye, FaSun, FaExclamationTriangle, FaMapMarkerAlt, FaSync, FaClock } from 'react-icons/fa';
 import { useLanguage } from '../context/LanguageContext';
-import axios from 'axios';
+import { weatherAPI } from '../api/services';
+import { getErrorMessage } from '../api/client';
+
+// "2026-11-22T06:23" (local time at the location) -> "6:23 AM"
+const formatClock = (iso) => {
+  if (!iso || !iso.includes('T')) return '—';
+  const [h, m] = iso.split('T')[1].split(':').map(Number);
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+};
+
+const dayLength = (day) => {
+  if (!day?.sunrise || !day?.sunset) return '—';
+  const mins = (s) => { const [h, m] = s.split('T')[1].split(':').map(Number); return h * 60 + m; };
+  const d = mins(day.sunset) - mins(day.sunrise);
+  return `${Math.floor(d / 60)}h ${d % 60}m`;
+};
+
+// Simple rules that turn today's forecast into field-work advice.
+const activityPlan = (day, agri) => {
+  const good = [];
+  const caution = [];
+  const avoid = [];
+  if (!day) return { good, caution, avoid };
+  const rainProb = day.precipitation?.probability ?? 0;
+  const rain = day.precipitation?.amount ?? 0;
+  const wind = day.windSpeed ?? 0;
+  const tmax = day.temperature?.max ?? 0;
+
+  if (rainProb >= 60 || rain >= 10) {
+    avoid.push('Fertilizer or pesticide application (rain will wash it off)', 'Irrigation');
+    caution.push('Harvesting — keep produce covered');
+    good.push('Clearing field drains', 'Indoor work: seed sorting, tool repair');
+  } else {
+    good.push('Weeding and soil preparation', 'Harvesting mature crops');
+    if (wind < 15) good.push('Spraying (early morning or evening)');
+    else caution.push(`Spraying — wind up to ${wind} km/h causes drift`);
+    if (rainProb >= 30) caution.push('Fertilizer application — some chance of rain');
+    else good.push('Fertilizer application');
+  }
+  if (tmax >= 35) {
+    avoid.push('Transplanting during the hot afternoon');
+    caution.push('Field work between 12 and 3 PM — heat stress');
+  } else if (rainProb < 60) {
+    good.push('Transplanting seedlings');
+  }
+  if (agri?.soilMoisture != null && agri.soilMoisture < 15 && rainProb < 50) {
+    good.push('Irrigation (topsoil is dry)');
+  } else if (agri?.soilMoisture != null && agri.soilMoisture > 35) {
+    avoid.push('Heavy irrigation (soil is already wet)');
+  }
+  return { good, caution, avoid };
+};
+
+const PRESET_LOCATIONS = [
+  { name: 'Thrissur, Kerala', lat: 10.5276, lon: 76.2144 },
+  { name: 'Bengaluru, Karnataka', lat: 12.9716, lon: 77.5946 },
+  { name: 'Hyderabad, Telangana', lat: 17.385, lon: 78.4867 },
+  { name: 'Chennai, Tamil Nadu', lat: 13.0827, lon: 80.2707 },
+  { name: 'Pune, Maharashtra', lat: 18.5204, lon: 73.8567 },
+  { name: 'Ludhiana, Punjab', lat: 30.901, lon: 75.8573 },
+  { name: 'Lucknow, Uttar Pradesh', lat: 26.8467, lon: 80.9462 },
+];
 import { Line, Bar } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -47,71 +108,34 @@ const WeatherPage = () => {
   const fetchWeatherData = async () => {
     setLoading(true);
     setError(null);
-    
     try {
-      // Fetch current weather and forecast in parallel
       const [currentResponse, forecastResponse] = await Promise.all([
-        axios.get(`http://localhost:3001/api/weather/current?lat=${location.lat}&lon=${location.lon}`),
-        axios.get(`http://localhost:3001/api/weather/forecast?lat=${location.lat}&lon=${location.lon}&days=7`)
+        weatherAPI.getCurrentWeather(location.lat, location.lon),
+        weatherAPI.getForecast(location.lat, location.lon, 7),
       ]);
-      
-      if (currentResponse.data.success) {
-        setWeatherData(currentResponse.data.data);
-      }
-      
-      if (forecastResponse.data.success) {
-        setForecast(forecastResponse.data.data);
-      }
-      
+      setWeatherData(currentResponse.data);
+      setForecast(forecastResponse.data);
       setLastUpdated(new Date());
     } catch (err) {
-      console.error('Weather fetch error:', err);
-      setError('Failed to fetch weather data. Please try again.');
-      
-      // Set mock data as fallback
-      setWeatherData(getMockWeatherData());
-      setForecast(getMockForecast());
+      setWeatherData(null);
+      setForecast(null);
+      setError(getErrorMessage(err, 'Failed to fetch weather data. Please try again.'));
     } finally {
       setLoading(false);
     }
   };
 
-  const getMockWeatherData = () => ({
-    location: { name: 'Thrissur, Kerala' },
-    current: {
-      temperature: 28.5,
-      feelsLike: 31.2,
-      humidity: 75,
-      pressure: 1013,
-      windSpeed: 12.5,
-      windDirection: 240,
-      visibility: 10,
-      uvIndex: 6,
-      condition: 'Partly Cloudy',
-      description: 'Partly cloudy with light winds',
-      cloudCover: 45
-    },
-    alerts: [],
-    agriculture: {
-      soilMoisture: 65,
-      recommendations: [
-        { type: 'irrigation', message: 'Reduce watering frequency due to high humidity', priority: 'medium' },
-        { type: 'pest-control', message: 'Monitor for fungal diseases in high humidity', priority: 'high' }
-      ]
+  const useMyLocation = () => {
+    if (!navigator.geolocation) {
+      setError('Your browser does not support location access.');
+      return;
     }
-  });
-
-  const getMockForecast = () => ({
-    forecast: [
-      { date: new Date(), temperature: { min: 24, max: 32 }, humidity: 75, precipitation: { probability: 40, amount: 5 }, condition: 'Partly Cloudy' },
-      { date: new Date(Date.now() + 86400000), temperature: { min: 23, max: 31 }, humidity: 80, precipitation: { probability: 60, amount: 12 }, condition: 'Light Rain' },
-      { date: new Date(Date.now() + 172800000), temperature: { min: 22, max: 30 }, humidity: 85, precipitation: { probability: 80, amount: 25 }, condition: 'Heavy Rain' },
-      { date: new Date(Date.now() + 259200000), temperature: { min: 23, max: 29 }, humidity: 78, precipitation: { probability: 50, amount: 8 }, condition: 'Cloudy' },
-      { date: new Date(Date.now() + 345600000), temperature: { min: 24, max: 31 }, humidity: 70, precipitation: { probability: 20, amount: 2 }, condition: 'Sunny' },
-      { date: new Date(Date.now() + 432000000), temperature: { min: 24, max: 32 }, humidity: 68, precipitation: { probability: 10, amount: 0 }, condition: 'Clear' },
-      { date: new Date(Date.now() + 518400000), temperature: { min: 25, max: 33 }, humidity: 65, precipitation: { probability: 15, amount: 1 }, condition: 'Sunny' }
-    ]
-  });
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setLocation({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => setError('Could not get your location. Please allow location access or pick a place from the list.'),
+      { timeout: 10000 }
+    );
+  };
 
   const getWindDirection = (degrees) => {
     const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -246,26 +270,45 @@ const WeatherPage = () => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <FaMapMarkerAlt className="text-primary-600" />
-            <span className="font-semibold">{weatherData?.location?.name || 'Thrissur, Kerala'}</span>
+            <span className="font-semibold">{weatherData?.location?.name || '—'}</span>
           </div>
-          <div className="text-sm text-gray-500">
-            Lat: {location.lat.toFixed(4)}, Lon: {location.lon.toFixed(4)}
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <select
+              aria-label="Choose location"
+              className="border border-gray-300 rounded-lg px-2 py-1"
+              value=""
+              onChange={(e) => {
+                const p = PRESET_LOCATIONS[Number(e.target.value)];
+                if (p) setLocation({ lat: p.lat, lon: p.lon });
+              }}
+            >
+              <option value="">Change location…</option>
+              {PRESET_LOCATIONS.map((p, i) => <option key={p.name} value={i}>{p.name}</option>)}
+            </select>
+            <button onClick={useMyLocation} className="border border-primary-600 text-primary-700 rounded-lg px-3 py-1 hover:bg-primary-50">
+              Use my location
+            </button>
+            <span className="text-gray-500">Lat: {location.lat.toFixed(4)}, Lon: {location.lon.toFixed(4)}</span>
           </div>
         </div>
       </div>
 
-      {/* Weather Alerts */}
-      {weatherData?.alerts && weatherData.alerts.length > 0 && (
-        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6 rounded-lg">
+      {error && (
+        <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-lg mb-6" role="alert">{error}</div>
+      )}
+
+      {/* Weather alerts (derived from the forecast) */}
+      {weatherData?.alerts?.map((alert, i) => (
+        <div key={i} className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-3 rounded-lg">
           <div className="flex items-start">
             <FaExclamationTriangle className="text-yellow-600 mt-1 mr-3" />
             <div>
-              <h3 className="font-semibold text-yellow-800">{weatherData.alerts[0].title}</h3>
-              <p className="text-yellow-700 text-sm mt-1">{weatherData.alerts[0].description}</p>
+              <h3 className="font-semibold text-yellow-800">{alert.title}</h3>
+              <p className="text-yellow-700 text-sm mt-1">{alert.description}</p>
             </div>
           </div>
         </div>
-      )}
+      ))}
 
       {/* Tab Navigation */}
       <div className="flex gap-2 mb-6">
@@ -378,15 +421,15 @@ const WeatherPage = () => {
               <div className="space-y-3">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Sunrise</span>
-                  <span className="font-semibold">6:30 AM</span>
+                  <span className="font-semibold">{formatClock(weatherData.daily?.[0]?.sunrise)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Sunset</span>
-                  <span className="font-semibold">6:45 PM</span>
+                  <span className="font-semibold">{formatClock(weatherData.daily?.[0]?.sunset)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Day Length</span>
-                  <span className="font-semibold">12h 15m</span>
+                  <span className="font-semibold">{dayLength(weatherData.daily?.[0])}</span>
                 </div>
               </div>
             </div>
@@ -465,23 +508,23 @@ const WeatherPage = () => {
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-gray-600">Soil Moisture</span>
-                  <span className="font-semibold">{weatherData.agriculture.soilMoisture}%</span>
+                  <span className="font-semibold">{weatherData.agriculture.soilMoisture != null ? `${weatherData.agriculture.soilMoisture}% (3-9 cm)` : 'Not available'}</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div 
                     className="bg-blue-600 h-2 rounded-full" 
-                    style={{ width: `${weatherData.agriculture.soilMoisture}%` }}
+                    style={{ width: `${Math.min(100, weatherData.agriculture.soilMoisture || 0)}%` }}
                   ></div>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4 mt-4">
                 <div className="bg-gray-50 rounded-lg p-3">
-                  <p className="text-sm text-gray-600">Best Time to Water</p>
-                  <p className="font-semibold">Early Morning</p>
+                  <p className="text-sm text-gray-600">Soil Temperature</p>
+                  <p className="font-semibold">{weatherData.agriculture.soilTemperature != null ? `${weatherData.agriculture.soilTemperature}°C` : '—'}</p>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-3">
-                  <p className="text-sm text-gray-600">Evaporation Rate</p>
-                  <p className="font-semibold">Moderate</p>
+                  <p className="text-sm text-gray-600">Evapotranspiration today</p>
+                  <p className="font-semibold">{weatherData.agriculture.evapotranspiration != null ? `${weatherData.agriculture.evapotranspiration} mm` : '—'}</p>
                 </div>
               </div>
             </div>
@@ -508,7 +551,7 @@ const WeatherPage = () => {
                       {rec.type === 'pest-control' && <FaExclamationTriangle className="text-yellow-600" />}
                     </div>
                     <div>
-                      <p className="font-medium text-gray-800 capitalize">{rec.type.replace('-', ' ')}</p>
+                      <p className="font-medium text-gray-800 capitalize">{rec.type.replace(/-/g, ' ')}</p>
                       <p className="text-sm text-gray-600 mt-1">{rec.message}</p>
                     </div>
                   </div>
@@ -519,33 +562,26 @@ const WeatherPage = () => {
 
           {/* Weather-Based Farming Tips */}
           <div className="lg:col-span-2 bg-gradient-to-r from-green-50 to-green-100 rounded-xl p-6">
-            <h3 className="font-semibold text-gray-800 mb-4 text-lg">Weather-Based Farming Activities</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white rounded-lg p-4">
-                <h4 className="font-medium text-green-700 mb-2">✅ Good for Today</h4>
-                <ul className="text-sm text-gray-600 space-y-1">
-                  <li>• Fertilizer application</li>
-                  <li>• Weeding activities</li>
-                  <li>• Soil preparation</li>
-                </ul>
-              </div>
-              <div className="bg-white rounded-lg p-4">
-                <h4 className="font-medium text-yellow-700 mb-2">⚠️ Proceed with Caution</h4>
-                <ul className="text-sm text-gray-600 space-y-1">
-                  <li>• Pesticide spraying</li>
-                  <li>• Harvesting</li>
-                  <li>• Transplanting</li>
-                </ul>
-              </div>
-              <div className="bg-white rounded-lg p-4">
-                <h4 className="font-medium text-red-700 mb-2">❌ Avoid Today</h4>
-                <ul className="text-sm text-gray-600 space-y-1">
-                  <li>• Heavy irrigation</li>
-                  <li>• Seed sowing in open</li>
-                  <li>• Chemical applications</li>
-                </ul>
-              </div>
-            </div>
+            <h3 className="font-semibold text-gray-800 mb-1 text-lg">Weather-Based Farming Activities</h3>
+            <p className="text-xs text-gray-600 mb-4">Based on today&apos;s forecast for this location.</p>
+            {(() => {
+              const plan = activityPlan(weatherData.daily?.[0], weatherData.agriculture);
+              const col = (title, color, items) => (
+                <div className="bg-white rounded-lg p-4">
+                  <h4 className={`font-medium mb-2 ${color}`}>{title}</h4>
+                  <ul className="text-sm text-gray-600 space-y-1">
+                    {items.length ? items.map((i) => <li key={i}>• {i}</li>) : <li>• Nothing specific</li>}
+                  </ul>
+                </div>
+              );
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {col('✅ Good for Today', 'text-green-700', plan.good)}
+                  {col('⚠️ Proceed with Caution', 'text-yellow-700', plan.caution)}
+                  {col('❌ Avoid Today', 'text-red-700', plan.avoid)}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

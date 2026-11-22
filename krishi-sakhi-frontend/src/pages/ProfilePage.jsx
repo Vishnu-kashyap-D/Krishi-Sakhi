@@ -1,301 +1,262 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { 
-  FaUser, FaEdit, FaMapMarkerAlt, FaPhone, FaEnvelope, FaLeaf, 
-  FaHistory, FaChartLine, FaWallet, FaShoppingCart, FaComments, 
-  FaCalendarAlt, FaTractor, FaSeedling, FaStar, FaClock, 
-  FaCheckCircle, FaBell, FaChartPie, FaDownload, FaUpload, 
-  FaPercent, FaAward, FaGraduationCap, FaHandshake
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  FaEdit, FaMapMarkerAlt, FaPhone, FaEnvelope, FaLeaf, FaCalendarAlt,
+  FaMicroscope, FaComments, FaStore, FaSave, FaTimes, FaKey,
 } from 'react-icons/fa';
+import { authAPI, analysisAPI, cropAnalysisAPI, chatAPI, marketplaceAPI } from '../api/services';
+import { getErrorMessage } from '../api/client';
+import { getUser, updateStoredUser } from '../utils/auth';
+
+const locationText = (loc) => {
+  if (!loc) return '';
+  if (typeof loc === 'string') return loc;
+  return [loc.district, loc.state].filter(Boolean).join(', ');
+};
+
+const formatDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+
+const Stat = ({ icon: Icon, label, value }) => (
+  <div className="bg-white rounded-xl shadow p-4 flex items-center gap-3">
+    <div className="p-3 rounded-full bg-primary-100 text-primary-700"><Icon /></div>
+    <div>
+      <p className="text-2xl font-bold text-gray-800">{value ?? '—'}</p>
+      <p className="text-sm text-gray-600">{label}</p>
+    </div>
+  </div>
+);
 
 const ProfilePage = () => {
   const navigate = useNavigate();
-  const [user, setUser] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [user, setUser] = useState(getUser());
+  const [farmHistory, setFarmHistory] = useState(null);
+  const [cropHistory, setCropHistory] = useState(null);
+  const [sessions, setSessions] = useState(null);
+  const [listings, setListings] = useState(null);
+  const [error, setError] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ name: '', phone: '', location: '', totalAcres: '', crops: '', soilType: '', irrigation: '', lat: '', lng: '' });
+  const [geoError, setGeoError] = useState(null);
+
+  const useCurrentLocation = () => {
+    setGeoError(null);
+    if (!navigator.geolocation) { setGeoError('Location is not supported by this browser.'); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setForm((f) => ({ ...f, lat: pos.coords.latitude, lng: pos.coords.longitude })),
+      () => setGeoError('Location permission was denied.'),
+      { timeout: 10000 }
+    );
+  };
+  const [message, setMessage] = useState(null);
+  const [pw, setPw] = useState({ current: '', next: '' });
+  const [pwMessage, setPwMessage] = useState(null);
 
   useEffect(() => {
-    // Load user data
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      const userData = JSON.parse(storedUser);
-      setUser({
-        ...userData,
-        joinedDate: 'January 2024',
-        profileImage: 'https://ui-avatars.com/api/?name=' + encodeURIComponent(userData.name) + '&background=059669&color=fff&size=200'
-      });
-    } else {
-      navigate('/login');
+    if (!getUser()) {
+      navigate('/login', { replace: true, state: { from: '/profile' } });
+      return;
     }
+    authAPI.getProfile()
+      .then((res) => { setUser(res.data.user); updateStoredUser(res.data.user); })
+      .catch((err) => {
+        if (err.response?.status === 401) navigate('/login', { replace: true, state: { from: '/profile' } });
+        else setError(getErrorMessage(err, 'Could not load your profile.'));
+      });
+    analysisAPI.getHistory(5).then((r) => setFarmHistory(r.data)).catch(() => setFarmHistory([]));
+    cropAnalysisAPI.getHistory(5).then((r) => setCropHistory(r.data)).catch(() => setCropHistory({ history: [], total: 0 }));
+    chatAPI.getChatSessions().then((r) => setSessions(r.data.sessions)).catch(() => setSessions([]));
+    marketplaceAPI.getProducts({ mine: 'true', limit: 50 }).then((r) => setListings(r.data.products)).catch(() => setListings([]));
   }, [navigate]);
 
-  if (!user) {
-    return (
-      <div className="flex justify-center items-center h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
-      </div>
-    );
-  }
+  if (!user) return null;
 
-  const stats = {
-    totalEarnings: 245000,
-    monthlyEarnings: 45000,
-    totalOrders: 152,
-    completedOrders: 148,
-    activeListings: 12,
-    soldItems: 89,
-    rating: 4.8,
-    reviews: 67,
-    aiConsultations: 156,
-    farmAnalyses: 24,
-    savedReports: 18,
-    certificates: 3
+  const startEdit = () => {
+    setForm({
+      name: user.name || '',
+      phone: user.phone || '',
+      location: locationText(user.location),
+      totalAcres: user.farmDetails?.totalAcres || '',
+      crops: (user.farmDetails?.crops || []).join(', '),
+      soilType: user.farmDetails?.soilType || '',
+      irrigation: user.farmDetails?.irrigation || '',
+      lat: user.farmDetails?.lat ?? '',
+      lng: user.farmDetails?.lng ?? '',
+    });
+    setMessage(null);
+    setEditing(true);
   };
 
-  const recentActivities = [
-    { icon: FaShoppingCart, text: 'Order #1458 delivered successfully', time: '2 hours ago', type: 'success' },
-    { icon: FaComments, text: 'AI consultation on pest control completed', time: '5 hours ago', type: 'info' },
-    { icon: FaLeaf, text: 'New listing: Organic Tomatoes (50kg)', time: 'Yesterday', type: 'primary' },
-    { icon: FaStar, text: 'Received 5-star rating from buyer', time: '2 days ago', type: 'warning' },
-    { icon: FaChartLine, text: 'Farm analysis report generated', time: '3 days ago', type: 'info' },
-  ];
+  const saveProfile = async (e) => {
+    e.preventDefault();
+    setMessage(null);
+    try {
+      const res = await authAPI.updateProfile({
+        name: form.name.trim(),
+        phone: form.phone.trim(),
+        location: form.location.trim(),
+        farmDetails: {
+          ...(user.farmDetails || {}),
+          totalAcres: Number(form.totalAcres) || 0,
+          crops: form.crops.split(',').map((c) => c.trim()).filter(Boolean),
+          soilType: form.soilType || null,
+          irrigation: form.irrigation || null,
+          ...(form.lat !== '' && form.lat != null && { lat: Number(form.lat), lng: Number(form.lng) }),
+        },
+      });
+      setUser(res.data.user);
+      updateStoredUser(res.data.user);
+      setEditing(false);
+      setMessage({ ok: true, text: 'Profile updated.' });
+    } catch (err) {
+      setMessage({ ok: false, text: getErrorMessage(err, 'Could not save your profile.') });
+    }
+  };
 
-  const achievements = [
-    { icon: FaAward, title: 'Top Seller', description: 'Sold 100+ products', color: 'bg-yellow-500' },
-    { icon: FaHandshake, title: 'Trusted Farmer', description: '50+ positive reviews', color: 'bg-blue-500' },
-    { icon: FaGraduationCap, title: 'AI Expert', description: '100+ consultations', color: 'bg-purple-500' },
-    { icon: FaLeaf, title: 'Organic Champion', description: 'All organic products', color: 'bg-green-500' },
-  ];
+  const changePassword = async (e) => {
+    e.preventDefault();
+    setPwMessage(null);
+    try {
+      await authAPI.changePassword(pw.current, pw.next);
+      setPw({ current: '', next: '' });
+      setPwMessage({ ok: true, text: 'Password changed.' });
+    } catch (err) {
+      setPwMessage({ ok: false, text: getErrorMessage(err, 'Could not change the password.') });
+    }
+  };
+
+  const avatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name)}&background=059669&color=fff&size=200`;
+  const input = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-800 focus:ring-2 focus:ring-primary-500';
 
   return (
-    <div className="container mx-auto px-4 py-6 max-w-7xl">
-      {/* Profile Header */}
-      <div className="bg-gradient-to-r from-primary-600 to-primary-700 rounded-2xl p-8 text-white mb-6">
-        <div className="flex flex-col md:flex-row items-center md:items-start space-y-4 md:space-y-0 md:space-x-6">
-          <img 
-            src={user.profileImage} 
-            alt={user.name}
-            className="w-32 h-32 rounded-full border-4 border-white shadow-lg"
-          />
-          <div className="flex-1 text-center md:text-left">
-            <h1 className="text-3xl font-bold mb-2">{user.name}</h1>
-            <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 text-sm opacity-90">
-              <span className="flex items-center"><FaMapMarkerAlt className="mr-1" /> {user.location || 'Kerala, India'}</span>
-              <span className="flex items-center"><FaPhone className="mr-1" /> {user.phone || '+91 98765 43210'}</span>
-              <span className="flex items-center"><FaEnvelope className="mr-1" /> {user.email}</span>
-              <span className="flex items-center"><FaCalendarAlt className="mr-1" /> Joined {user.joinedDate}</span>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2 justify-center md:justify-start">
-              <span className="bg-white/20 px-3 py-1 rounded-full text-xs">Verified Farmer</span>
-              <span className="bg-white/20 px-3 py-1 rounded-full text-xs">Organic Certified</span>
-              <span className="bg-white/20 px-3 py-1 rounded-full text-xs">Premium Seller</span>
-            </div>
+    <div className="container mx-auto px-4 py-6 max-w-6xl space-y-6">
+      {error && <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-lg" role="alert">{error}</div>}
+
+      <div className="bg-gradient-to-r from-primary-600 to-primary-700 rounded-2xl p-6 text-white flex flex-col md:flex-row gap-6 items-start md:items-center">
+        <img src={avatar} alt="" className="w-24 h-24 rounded-full border-4 border-white shadow" />
+        <div className="flex-1 min-w-0">
+          <h1 className="text-3xl font-bold mb-2">{user.name}</h1>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-primary-100 text-sm">
+            {locationText(user.location) && <span className="flex items-center gap-1"><FaMapMarkerAlt /> {locationText(user.location)}</span>}
+            {user.phone && <span className="flex items-center gap-1"><FaPhone /> {user.phone}</span>}
+            <span className="flex items-center gap-1"><FaEnvelope /> {user.email}</span>
+            <span className="flex items-center gap-1"><FaCalendarAlt /> Joined {formatDate(user.created_at)}</span>
           </div>
-          <button className="bg-white text-primary-600 px-6 py-2 rounded-lg font-medium hover:bg-gray-100 transition-colors">
-            <FaEdit className="inline mr-2" /> Edit Profile
+          {(user.farmDetails?.totalAcres > 0 || user.farmDetails?.crops?.length > 0) && (
+            <p className="mt-2 text-sm">
+              <FaLeaf className="inline mr-1" />
+              {user.farmDetails.totalAcres > 0 && `${user.farmDetails.totalAcres} acres`}
+              {user.farmDetails.crops?.length > 0 && ` · ${user.farmDetails.crops.join(', ')}`}
+            </p>
+          )}
+        </div>
+        {!editing && (
+          <button onClick={startEdit} className="bg-white text-primary-700 px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-primary-50">
+            <FaEdit /> Edit profile
           </button>
-        </div>
+        )}
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="bg-white rounded-xl shadow-sm mb-6 p-1">
-        <div className="flex flex-wrap">
-          {['dashboard', 'activity', 'analytics', 'achievements'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`flex-1 px-4 py-3 rounded-lg font-medium capitalize transition-colors ${
-                activeTab === tab ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
+      {message && (
+        <div className={`px-4 py-3 rounded-lg border ${message.ok ? 'bg-green-50 border-green-300 text-green-800' : 'bg-red-50 border-red-300 text-red-700'}`}>{message.text}</div>
+      )}
+
+      {editing && (
+        <form onSubmit={saveProfile} className="bg-white rounded-xl shadow p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <label className="block"><span className="text-sm font-medium">Name</span><input className={input} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required minLength={2} /></label>
+          <label className="block"><span className="text-sm font-medium">Phone</span><input className={input} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label>
+          <label className="block"><span className="text-sm font-medium">Location (district, state)</span><input className={input} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></label>
+          <label className="block"><span className="text-sm font-medium">Farm size (acres)</span><input type="number" min="0" step="any" className={input} value={form.totalAcres} onChange={(e) => setForm({ ...form, totalAcres: e.target.value })} /></label>
+          <label className="block md:col-span-2"><span className="text-sm font-medium">Crops you grow (comma separated)</span><input className={input} value={form.crops} onChange={(e) => setForm({ ...form, crops: e.target.value })} placeholder="Paddy, Banana, Coconut" /></label>
+          <label className="block"><span className="text-sm font-medium">Soil type</span>
+            <select className={input} value={form.soilType} onChange={(e) => setForm({ ...form, soilType: e.target.value })}>
+              <option value="">Not sure</option>
+              {['Laterite', 'Alluvial', 'Clay / Kari (acid sulphate)', 'Sandy / Coastal', 'Red loam', 'Forest loam', 'Black (cotton) soil'].map((s) => <option key={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="block"><span className="text-sm font-medium">Irrigation</span>
+            <select className={input} value={form.irrigation} onChange={(e) => setForm({ ...form, irrigation: e.target.value })}>
+              <option value="">Not set</option>
+              {[['rainfed', 'Rainfed only'], ['well', 'Open well'], ['borewell', 'Borewell'], ['canal', 'Canal / tank'], ['drip', 'Drip / sprinkler']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </label>
+          <div className="md:col-span-2">
+            <span className="text-sm font-medium">Farm location (for weather alerts)</span>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={useCurrentLocation} className="btn-ghost !py-2 text-sm">Use my current location</button>
+              <span className="text-sm text-soil-700">
+                {form.lat != null && form.lat !== '' ? `${Number(form.lat).toFixed(4)}, ${Number(form.lng).toFixed(4)}` : 'Not set'}
+              </span>
+              {geoError && <span className="text-sm text-red-700">{geoError}</span>}
+            </div>
+          </div>
+          <div className="md:col-span-2 flex gap-3 justify-end">
+            <button type="button" onClick={() => setEditing(false)} className="px-4 py-2 border rounded-lg flex items-center gap-2"><FaTimes /> Cancel</button>
+            <button type="submit" className="px-4 py-2 bg-primary-600 text-white rounded-lg flex items-center gap-2 hover:bg-primary-700"><FaSave /> Save</button>
+          </div>
+        </form>
+      )}
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Stat icon={FaLeaf} label="Farm analyses" value={farmHistory?.length} />
+        <Stat icon={FaMicroscope} label="Crop photo analyses" value={cropHistory?.total} />
+        <Stat icon={FaComments} label="AI chat sessions" value={sessions?.length} />
+        <Stat icon={FaStore} label="My listings" value={listings?.length} />
       </div>
 
-      {/* Dashboard Tab */}
-      {activeTab === 'dashboard' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-          {/* Stat Cards */}
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <FaWallet className="text-3xl text-green-500" />
-              <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full">+12%</span>
-            </div>
-            <h3 className="text-2xl font-bold text-gray-800">₹{stats.totalEarnings.toLocaleString()}</h3>
-            <p className="text-gray-600 text-sm">Total Earnings</p>
-            <div className="mt-4 text-xs text-gray-500">
-              ₹{stats.monthlyEarnings.toLocaleString()} this month
-            </div>
-          </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section className="bg-white rounded-xl shadow p-6">
+          <h2 className="text-lg font-semibold mb-3">Recent farm analyses</h2>
+          {farmHistory?.length ? (
+            <ul className="divide-y">
+              {farmHistory.map((a) => (
+                <li key={a.id} className="py-2 text-sm">
+                  <p className="font-medium">{a.farmName} · {a.acres} acres</p>
+                  <p className="text-gray-600">{a.report?.soil_properties?.texture}, pH {a.report?.soil_properties?.ph} · {formatDate(a.createdAt)}</p>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="text-sm text-gray-600">No analyses yet. <Link className="text-primary-700 underline" to="/farm-analysis">Analyse your farm</Link>.</p>}
+        </section>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <FaShoppingCart className="text-3xl text-blue-500" />
-              <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full">Active</span>
-            </div>
-            <h3 className="text-2xl font-bold text-gray-800">{stats.totalOrders}</h3>
-            <p className="text-gray-600 text-sm">Total Orders</p>
-            <div className="mt-4 text-xs text-gray-500">
-              {stats.completedOrders} completed
-            </div>
-          </div>
+        <section className="bg-white rounded-xl shadow p-6">
+          <h2 className="text-lg font-semibold mb-3">Recent crop photo checks</h2>
+          {cropHistory?.history?.length ? (
+            <ul className="divide-y">
+              {cropHistory.history.map((h) => (
+                <li key={h.id} className="py-2 text-sm">
+                  <p className="font-medium">{h.cropType} · health {h.health}%</p>
+                  <p className="text-gray-600">{h.issueCount} issue(s) found · {formatDate(h.date)}</p>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="text-sm text-gray-600">No photo checks yet. <Link className="text-primary-700 underline" to="/crop-analysis">Check a crop photo</Link>.</p>}
+        </section>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <FaLeaf className="text-3xl text-purple-500" />
-              <span className="bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full">{stats.activeListings}</span>
-            </div>
-            <h3 className="text-2xl font-bold text-gray-800">{stats.soldItems}</h3>
-            <p className="text-gray-600 text-sm">Products Sold</p>
-            <div className="mt-4 text-xs text-gray-500">
-              {stats.activeListings} active listings
-            </div>
-          </div>
+        <section className="bg-white rounded-xl shadow p-6">
+          <h2 className="text-lg font-semibold mb-3">My marketplace listings</h2>
+          {listings?.length ? (
+            <ul className="divide-y">
+              {listings.map((p) => (
+                <li key={p.id} className="py-2 text-sm flex justify-between gap-2">
+                  <Link className="text-primary-700 underline" to={`/marketplace/${p.id}`}>{p.title}</Link>
+                  <span className="text-gray-600">₹{p.price}/{p.unit} · {p.status}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="text-sm text-gray-600">You have no listings. <Link className="text-primary-700 underline" to="/marketplace/create">Sell a product</Link>.</p>}
+        </section>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <FaStar className="text-3xl text-yellow-500" />
-              <span className="bg-yellow-100 text-yellow-800 text-xs px-2 py-1 rounded-full">Excellent</span>
-            </div>
-            <h3 className="text-2xl font-bold text-gray-800">{stats.rating}</h3>
-            <p className="text-gray-600 text-sm">Average Rating</p>
-            <div className="mt-4 text-xs text-gray-500">
-              {stats.reviews} reviews
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Activity Tab */}
-      {activeTab === 'activity' && (
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <h2 className="text-xl font-bold text-gray-800 mb-6">Recent Activities</h2>
-          <div className="space-y-4">
-            {recentActivities.map((activity, index) => (
-              <div key={index} className="flex items-start space-x-4 p-4 hover:bg-gray-50 rounded-lg transition-colors">
-                <div className={`p-3 rounded-full bg-${activity.type === 'success' ? 'green' : activity.type === 'warning' ? 'yellow' : activity.type === 'primary' ? 'blue' : 'gray'}-100`}>
-                  <activity.icon className={`text-${activity.type === 'success' ? 'green' : activity.type === 'warning' ? 'yellow' : activity.type === 'primary' ? 'blue' : 'gray'}-600`} />
-                </div>
-                <div className="flex-1">
-                  <p className="text-gray-800 font-medium">{activity.text}</p>
-                  <p className="text-gray-500 text-sm mt-1">{activity.time}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Analytics Tab */}
-      {activeTab === 'analytics' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">Performance Overview</h3>
-            <div className="space-y-4">
-              <div>
-                <div className="flex justify-between mb-2">
-                  <span className="text-gray-600">Sales Target</span>
-                  <span className="font-medium">82%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div className="bg-green-600 h-2 rounded-full" style={{width: '82%'}}></div>
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between mb-2">
-                  <span className="text-gray-600">Customer Satisfaction</span>
-                  <span className="font-medium">96%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div className="bg-blue-600 h-2 rounded-full" style={{width: '96%'}}></div>
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between mb-2">
-                  <span className="text-gray-600">Response Rate</span>
-                  <span className="font-medium">89%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div className="bg-purple-600 h-2 rounded-full" style={{width: '89%'}}></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">Resource Usage</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="text-center p-4 bg-blue-50 rounded-lg">
-                <FaComments className="text-3xl text-blue-600 mx-auto mb-2" />
-                <p className="text-2xl font-bold text-gray-800">{stats.aiConsultations}</p>
-                <p className="text-sm text-gray-600">AI Consultations</p>
-              </div>
-              <div className="text-center p-4 bg-green-50 rounded-lg">
-                <FaChartLine className="text-3xl text-green-600 mx-auto mb-2" />
-                <p className="text-2xl font-bold text-gray-800">{stats.farmAnalyses}</p>
-                <p className="text-sm text-gray-600">Farm Analyses</p>
-              </div>
-              <div className="text-center p-4 bg-purple-50 rounded-lg">
-                <FaDownload className="text-3xl text-purple-600 mx-auto mb-2" />
-                <p className="text-2xl font-bold text-gray-800">{stats.savedReports}</p>
-                <p className="text-sm text-gray-600">Saved Reports</p>
-              </div>
-              <div className="text-center p-4 bg-yellow-50 rounded-lg">
-                <FaAward className="text-3xl text-yellow-600 mx-auto mb-2" />
-                <p className="text-2xl font-bold text-gray-800">{stats.certificates}</p>
-                <p className="text-sm text-gray-600">Certificates</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Achievements Tab */}
-      {activeTab === 'achievements' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {achievements.map((achievement, index) => (
-            <div key={index} className="bg-white rounded-xl shadow-sm p-6 text-center hover:shadow-md transition-shadow">
-              <div className={`w-20 h-20 ${achievement.color} rounded-full flex items-center justify-center mx-auto mb-4`}>
-                <achievement.icon className="text-3xl text-white" />
-              </div>
-              <h3 className="font-bold text-gray-800 mb-2">{achievement.title}</h3>
-              <p className="text-sm text-gray-600">{achievement.description}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Quick Actions */}
-      <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-        <button 
-          onClick={() => navigate('/')}
-          className="bg-gradient-to-r from-green-500 to-green-600 text-white p-4 rounded-xl hover:shadow-lg transition-shadow text-center"
-        >
-          <FaLeaf className="text-2xl mx-auto mb-2" />
-          <span className="block text-sm font-medium">Analyze Farm</span>
-        </button>
-        <button 
-          onClick={() => navigate('/chatbot')}
-          className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-4 rounded-xl hover:shadow-lg transition-shadow text-center"
-        >
-          <FaComments className="text-2xl mx-auto mb-2" />
-          <span className="block text-sm font-medium">AI Assistant</span>
-        </button>
-        <button 
-          onClick={() => navigate('/marketplace')}
-          className="bg-gradient-to-r from-purple-500 to-purple-600 text-white p-4 rounded-xl hover:shadow-lg transition-shadow text-center"
-        >
-          <FaShoppingCart className="text-2xl mx-auto mb-2" />
-          <span className="block text-sm font-medium">Marketplace</span>
-        </button>
-        <button 
-          onClick={() => navigate('/weather')}
-          className="bg-gradient-to-r from-orange-500 to-orange-600 text-white p-4 rounded-xl hover:shadow-lg transition-shadow text-center"
-        >
-          <FaChartLine className="text-2xl mx-auto mb-2" />
-          <span className="block text-sm font-medium">Weather Info</span>
-        </button>
+        <section className="bg-white rounded-xl shadow p-6">
+          <h2 className="text-lg font-semibold mb-3 flex items-center gap-2"><FaKey /> Change password</h2>
+          {pwMessage && (
+            <div className={`px-3 py-2 rounded mb-3 text-sm ${pwMessage.ok ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-700'}`}>{pwMessage.text}</div>
+          )}
+          <form onSubmit={changePassword} className="space-y-3">
+            <input type="password" autoComplete="current-password" placeholder="Current password" className={input} value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} required />
+            <input type="password" autoComplete="new-password" placeholder="New password (min 6 characters)" className={input} value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} required minLength={6} />
+            <button type="submit" className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700">Update password</button>
+          </form>
+        </section>
       </div>
     </div>
   );

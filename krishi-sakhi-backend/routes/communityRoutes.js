@@ -1,20 +1,32 @@
 const express = require('express');
-const router = express.Router();
+const rateLimit = require('express-rate-limit');
 const communityController = require('../controllers/communityController');
+const { authenticate, optionalAuth } = require('../middleware/auth');
 
-// Forum routes
+const router = express.Router();
+
+const writeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.COMMUNITY_WRITE_RATE_LIMIT || 60),
+  message: { success: false, error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Forum: anyone can read; posting and commenting need an account.
 router.get('/forum/posts', communityController.getForumPosts);
-router.post('/forum/posts', communityController.createForumPost);
+router.post('/forum/posts', writeLimiter, authenticate, communityController.createForumPost);
 
-// Expert Connect routes
+// Expert connect
 router.get('/experts', communityController.getExperts);
-router.post('/experts/book', communityController.bookExpertConsultation);
+router.post('/experts/book', writeLimiter, optionalAuth, communityController.bookExpertConsultation);
+router.get('/experts/bookings', authenticate, communityController.getMyBookings);
 
-// Success Stories routes
+// Success stories
 router.get('/stories', communityController.getSuccessStories);
 
-// Common interaction routes
-router.post('/:contentType/:contentId/like', communityController.likeContent);
-router.post('/:contentType/:contentId/comment', communityController.addComment);
+// Likes and comments (contentType is currently "forum")
+router.post('/:contentType/:contentId/like', writeLimiter, optionalAuth, communityController.likeContent);
+router.post('/:contentType/:contentId/comment', writeLimiter, authenticate, communityController.addComment);
 
 module.exports = router;

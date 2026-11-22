@@ -1,12 +1,18 @@
 // config/db.js
+const path = require('path');
 const { Sequelize } = require('sequelize');
-require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
-// Database configuration - using SQLite for simplicity
+// SQLite database. The path is resolved relative to the backend folder so the
+// server works no matter which directory it is started from.
+const storage = process.env.DB_PATH
+  ? path.resolve(process.env.DB_PATH)
+  : path.join(__dirname, '..', 'database', 'krishi_sakhi.db');
+
 const sequelize = new Sequelize({
   dialect: 'sqlite',
-  storage: process.env.DB_PATH || './database/krishi_sakhi.db',
-  logging: process.env.NODE_ENV === 'development' ? console.log : false,
+  storage,
+  logging: process.env.DB_LOGGING === 'true' ? console.log : false,
   define: {
     timestamps: true,
     underscored: false,
@@ -15,36 +21,23 @@ const sequelize = new Sequelize({
   }
 });
 
-// Test database connection
 const testConnection = async () => {
-  try {
-    await sequelize.authenticate();
-    console.log('✅ Database connection established successfully.');
-  } catch (error) {
-    console.error('❌ Unable to connect to database:', error);
-  }
+  await sequelize.authenticate();
+  console.log(`✅ Database connection established (${storage})`);
 };
 
-// Initialize database and create tables
+// Load every model, set up associations and create any missing tables.
 const initializeDatabase = async () => {
-  try {
-    // Import models first
-    require('../models/User');
-    require('../models/ChatMessage');
-    
-    // Then import associations
-    require('../models/associations');
-    
-    await sequelize.sync({ alter: process.env.NODE_ENV === 'development' });
-    console.log('✅ Database tables synchronized.');
-  } catch (error) {
-    console.error('❌ Error synchronizing database:', error);
-    throw error;
-  }
+  require('../models');
+  // `sync()` only creates tables that do not exist yet; it never drops data.
+  await sequelize.sync();
+  await require('../models/seed').seedIfEmpty();
+  console.log('✅ Database tables synchronized.');
 };
 
-module.exports = { 
-  sequelize, 
-  testConnection, 
-  initializeDatabase 
+module.exports = {
+  sequelize,
+  storage,
+  testConnection,
+  initializeDatabase
 };

@@ -1,222 +1,99 @@
-# Krishi Sakhi  - Smart Farm Analysis Platform
+# Krishi Sakhi — AI farming companion for Kerala farmers
 
-A comprehensive web application that provides instant farm land profiling and analysis using geospatial data. Built for the Smart India Hackathon 2025.
+Krishi Sakhi (കൃഷി സഖി, "farming friend") is a full-stack web app built for Smart India Hackathon 2025
+(problem statement *AI-Powered Personal Farming Assistant for Kerala Farmers*, Govt. of Kerala; the
+project docs also reference SIH25168, a land-profiling statement). It gives a farmer a personal profile, a farm diary,
+reminders, weather- and record-aware advisories, a land/soil profile of their field, AI crop photo
+diagnosis and an AI assistant that knows their farm.
 
-## 🌾 Overview
+## Features
 
-Krishi Sakhi is a modern agricultural technology solution that helps farmers understand their land better through scientific data analysis. By simply clicking on a map, farmers can get detailed insights about their soil, water resources, vegetation health, and receive personalized farming recommendations.
+| Feature | What it does | Data source |
+|---|---|---|
+| **My Farm** (`/my-farm`) | Personalised advisory, farm diary (sowing, irrigation, fertiliser, spraying, pest sightings, harvest, costs), reminders, crop calendar & pest guide, schemes, mandi prices | Your own records + Open-Meteo + community reports + built-in Kerala crop knowledge base |
+| Farm (land) analysis | Click your field → soil texture, pH, organic carbon, sand/silt/clay, 30-day rainfall, soil moisture, elevation, recommendations | ISRIC SoilGrids (live, falls back to labelled estimates when down), Open-Meteo (live). Land cover, NDVI and groundwater are **estimates** (labelled in the UI) |
+| Crop health check | Upload/take a leaf photo → crop, health score, issues, treatment plan; rejects non-plant photos | Google Gemini vision |
+| AI assistant (text + voice) | Conversational advice in the selected language, remembers the conversation and uses your farm profile, diary and the crop knowledge base | Google Gemini |
+| Weather advisory | Current conditions, 7-day forecast, soil moisture/temperature, evapotranspiration, derived alerts and "what to do today" | Open-Meteo |
+| Marketplace | List produce/inputs, browse, search, filter, delete own listings | SQLite |
+| Community | Forum (post, like once, reply), expert consultation requests | SQLite |
+| Accounts | Register / login (JWT), profile with farm details (crops, acreage, soil type, irrigation, location), change password | SQLite + bcrypt |
 
-## 🎯 Problem Statement
-
-**SIH Problem ID**: 25168
-**Theme**: Agriculture & Rural Development  
-**Challenge**: Develop a unified land profiling system that integrates data from multiple geospatial sources to provide farmers with actionable insights.
-
-## ✨ Key Features
-
-### For Farmers
-- **Simple Interface**: Just click on the map to select your farm
-- **Instant Analysis**: Get comprehensive land profile in seconds
-- **Multi-language Ready**: Expandable language support system
-- **Visual Reports**: Easy-to-understand charts and cards
-- **Smart Recommendations**: Personalized farming advice based on your land
-
-### Technical Features
-- **Real-time Data Integration**: Pulls from multiple geospatial APIs
-- **Responsive Design**: Works on mobile, tablet, and desktop
-- **Scalable Architecture**: Built to handle thousands of concurrent users
-- **Offline Support**: Can work with cached data
-- **API-First Design**: Easy to integrate with other systems
-
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│                 │     │                 │     │                 │
-│  React Frontend │────▶│  Express API    │────▶│  PostgreSQL DB  │
-│  (Tailwind CSS) │     │  (Node.js)      │     │  (Supabase)     │
-│                 │     │                 │     │                 │
-└─────────────────┘     └────────┬────────┘     └─────────────────┘
-                                 │
-                    ┌────────────┼────────────┐
-                    │            │            │
-              ┌─────▼─────┐ ┌────▼────┐ ┌────▼────┐
-              │   ISRO    │ │  ISRIC  │ │  Water  │
-              │  Bhuvan   │ │SoilGrids│ │  Board  │
-              └───────────┘ └─────────┘ └─────────┘
+React 18 + Vite + Tailwind (port 3000)
+        │  /api  (Vite dev proxy)
+        ▼
+Express API (port 3001) ── Sequelize ── SQLite (krishi-sakhi-backend/database/krishi_sakhi.db)
+        ├── Google Gemini (chat, voice, crop images)   — needs GEMINI_API_KEY
+        ├── Open-Meteo (weather, soil moisture)        — free, no key
+        ├── ISRIC SoilGrids (soil properties)          — free, no key, often slow
+        ├── Nominatim / OpenStreetMap (place names)    — free, no key
+        └── data.gov.in Agmarknet (mandi prices)       — optional DATA_GOV_IN_API_KEY
 ```
 
-## 🚀 Quick Start
+The browser never talks to Gemini directly; all AI calls go through the backend so the key stays on the server.
 
-### Prerequisites
-- Node.js v16 or higher
-- npm or yarn
-- Git
+## Run locally
 
-### Installation
+Prerequisites: Node.js 18+ (tested on 22).
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/krishi-sakhi.git
-   cd krishi-sakhi
-   ```
-
-2. **Install Frontend**
-   ```bash
-   cd krishi-sakhi-frontend
-   npm install
-   npm run dev
-   ```
-
-3. **Install Backend (in a new terminal)**
-   ```bash
-   cd krishi-sakhi-backend
-   npm install
-   npm start
-   ```
-
-4. **Access the application**
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:3001
-
-## 📋 Data Sources & Integration
-
-### Current Implementation (Mock Data)
-The application currently uses intelligent mock data that simulates real geospatial APIs:
-- **Soil Data**: Texture, pH, organic carbon, NPK levels
-- **Land Cover**: Agricultural classification, vegetation index
-- **Water Resources**: Groundwater depth and availability
-
-### Future Integration
-Ready to integrate with:
-- **ISRO Bhuvan**: Land use/cover, topography, NDVI
-- **ISRIC SoilGrids**: Global soil properties database
-- **State Water Boards**: Groundwater and aquifer data
-- **IMD Weather**: Climate and rainfall patterns
-
-## 💻 Technology Stack
-
-### Frontend
-- **React 19**: Latest React with hooks and concurrent features
-- **Tailwind CSS**: Utility-first CSS framework
-- **Leaflet**: Interactive mapping library
-- **Vite**: Next-generation build tool
-- **Axios**: HTTP client for API calls
-
-### Backend
-- **Node.js**: JavaScript runtime
-- **Express.js**: Web application framework
-- **PostgreSQL**: Relational database (via Supabase)
-- **CORS**: Cross-origin resource sharing
-- **dotenv**: Environment configuration
-
-## 📁 Project Structure
-
-```
-krishi-sakhi/
-├── krishi-sakhi-frontend/     # React frontend application
-│   ├── src/
-│   │   ├── components/        # Reusable UI components
-│   │   ├── App.jsx           # Main application
-│   │   └── index.css         # Global styles
-│   └── package.json          # Frontend dependencies
-│
-├── krishi-sakhi-backend/      # Node.js backend API
-│   ├── controllers/          # Request handlers
-│   ├── routes/              # API endpoints
-│   ├── services/            # External API integration
-│   ├── config/              # Database configuration
-│   └── server.js            # Express server
-│
-└── README.md                # This file
+```powershell
+cd krishi-sakhi-backend
+npm install
+copy .env.example .env    # then set GEMINI_API_KEY and JWT_SECRET
+npm start                 # http://localhost:3001  (health: /api/health)
 ```
 
-## 🔧 Configuration
-
-### Frontend Environment Variables
-Create `.env` in frontend directory:
-```
-VITE_API_URL=http://localhost:3001/api/v1/analyze
+```powershell
+cd krishi-sakhi-frontend
+npm install
+npm run dev               # http://localhost:3000
 ```
 
-### Backend Environment Variables
-Create `.env` in backend directory:
+Or run `start.ps1` from the repository root to open both.
+
+### Backend environment (`krishi-sakhi-backend/.env`)
+
+| Variable | Required | Notes |
+|---|---|---|
+| `GEMINI_API_KEY` | for AI features | Without it chat/voice/crop analysis return a clear 503 |
+| `JWT_SECRET` | yes (production) | Random string; in development a temporary one is generated |
+| `PORT` | no | Default 3001 |
+| `GEMINI_MODEL` | no | Default `gemini-2.5-flash` |
+| `DATA_GOV_IN_API_KEY` | no | Enables live mandi prices |
+| `DB_PATH`, `CORS_ORIGIN`, `SOILGRIDS_TIMEOUT_MS` | no | See `.env.example` |
+
+### Frontend environment (`krishi-sakhi-frontend/.env`)
+
+`VITE_API_URL=/api` (default) and `VITE_BACKEND_URL=http://localhost:3001` (proxy target). Never put API keys here: anything prefixed `VITE_` is shipped to the browser.
+
+## Tests
+
+```powershell
+cd krishi-sakhi-backend
+npm test        # 15 API tests, run offline (external services stubbed)
 ```
-DATABASE_URL=postgres://your-database-url
-PORT=3001
+
+```powershell
+cd krishi-sakhi-frontend
+npm run lint
+npm run build
 ```
 
-## 📱 Usage Guide
+## API overview
 
-### For Farmers
-1. Open the application
-2. Click on the map where your farm is located
-3. Adjust the farm area using +/- buttons
-4. Click "Analyze My Farm"
-5. View your comprehensive farm report
-6. Read personalized farming recommendations
+`GET /api/health` · `POST /api/auth/register|login` · `GET|PUT /api/auth/profile` · `POST /api/v1/analyze` ·
+`POST /api/chat/message` · `POST /api/crop-analysis/analyze` (multipart `image`) · `GET /api/weather/current|forecast|agriculture|alerts` ·
+`GET|POST /api/marketplace/products` · `GET|POST /api/community/forum/posts` ·
+`GET /api/farm/advisory` · `GET|POST /api/farm/activities` · `GET|POST|PATCH /api/farm/reminders` · `GET /api/farm/knowledge` · `GET /api/farm/prices`.
+`GET /` on the backend lists every endpoint.
 
-### For Developers
-1. API endpoint: `POST /api/v1/analyze`
-2. Request body: `{ latitude, longitude, acres, farmName }`
-3. Response: Comprehensive JSON with all analysis data
+## Known limitations
 
-## 🌟 Future Enhancements
-
-### Phase 1 (Next 3 months)
-- [ ] Real API integration with ISRO Bhuvan
-- [ ] User authentication and farm history
-- [ ] Offline mode with data caching
-- [ ] Progressive Web App (PWA) support
-
-### Phase 2 (6 months)
-- [ ] AI-powered crop recommendations
-- [ ] Weather integration and alerts
-- [ ] Market price integration
-- [ ] Community features for farmers
-
-### Phase 3 (1 year)
-- [ ] Satellite imagery analysis
-- [ ] Drone integration support
-- [ ] Multi-language support (Hindi, Tamil, Malayalam, etc.)
-- [ ] Mobile apps for Android/iOS
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our contributing guidelines:
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
-
-- **Smart India Hackathon 2025** for the opportunity
-- **ISRO** for geospatial data concepts
-- **Kerala Agricultural University** for domain expertise
-- **Open Source Community** for amazing tools
-
-## 📞 Contact
-
-For questions or support:
-- Create an issue on GitHub
-- Email: support@krishisakhi.in (placeholder)
-- Website: https://krishisakhi.in (placeholder)
-
-## 🏆 Competition Details
-
-- **Hackathon**: Smart India Hackathon 2025
-- **Problem Code**: SIH25168
-- **Category**: Software
-- **Team**: [Your Team Name]
-- **College**: [Your College Name]
-
----
-
-Made with ❤️ for Indian Farmers 🚜🌾
+- Land cover, NDVI and groundwater depth have no free key-less data source yet; they are deterministic estimates and are labelled "Estimated" in the UI. Phosphorus and potassium are always estimates (SoilGrids does not provide them).
+- SoilGrids is frequently slow or unavailable; the app then falls back to labelled estimates.
+- Malayalam is intentionally not offered in the UI (team decision); the assistant can still answer in any language Gemini supports.
+- Expert profiles and success stories are curated sample content; booking requests are stored but no notification is sent.
+- See `AUDIT_REPORT.md` for the full audit, fixes and remaining work.

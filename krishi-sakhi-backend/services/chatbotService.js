@@ -1,382 +1,238 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { Op, fn, col } = require('sequelize');
+const ChatMessage = require('../models/ChatMessage');
+const { FarmActivity } = require('../models/FarmRecord');
+const { getModel, getModelName, toAIError } = require('./geminiClient');
+const { getLanguageInfo } = require('../config/languages');
+const { CROPS, resolveCrop } = require('../data/cropKnowledge');
 
-// Try to import ChatMessage model, but don't fail if it doesn't exist
-let ChatMessage;
-try {
-  ChatMessage = require('../models/ChatMessage');
-} catch (error) {
-  console.warn('ChatMessage model not available, chat history will not be saved');
-  ChatMessage = null;
-}
-
-// Initialize Gemini AI
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyDt2oax1jQxa-Relo2e8mhfpoeZ089QhEg';
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-// Agriculture-specific system prompt
 const SYSTEM_PROMPT = `
-You are Krishi Sakhi (कृषि सखी), an intelligent agricultural assistant for Indian farmers. You provide expert advice on:
-- Crop selection and cultivation practices
-- Soil health and fertilizer recommendations
-- Pest and disease management
-- Weather-based farming guidance
-- Market prices and selling strategies
-- Government agricultural schemes
-- Modern farming techniques and technology
-- Sustainable and organic farming practices
+You are Krishi Sakhi (कृषि सखी), an agricultural assistant for Indian farmers. You give practical advice on:
+- crop selection and cultivation practices
+- soil health and fertilizer use
+- pest and disease management
+- weather-based farming decisions
+- market and selling strategies
+- government agricultural schemes
+- sustainable and organic farming
 
 Guidelines:
-1. Always provide practical, location-specific advice when possible
-2. Consider Indian farming conditions, climate, and crops
-3. Use simple, farmer-friendly language
-4. Provide actionable recommendations with timing
-5. Support multiple Indian languages when possible
-6. Include warnings for harmful practices
-7. Suggest cost-effective solutions
-8. Emphasize sustainable farming practices
-
-Context: You're helping farmers in India, primarily in Kerala, but also across other states. Consider monsoon seasons, local crops like rice, coconut, spices, vegetables, and traditional farming practices.
+1. Give practical, location-specific advice when the location is known.
+2. Consider Indian climate, seasons (kharif, rabi, zaid, monsoon) and local crops.
+3. Use simple, farmer-friendly language and short paragraphs or bullet points.
+4. Give actionable steps with timing and quantities where appropriate.
+5. Warn about unsafe pesticide use and recommend protective equipment.
+6. Prefer low-cost and sustainable solutions.
+7. If you are unsure, say so and suggest contacting the local Krishi Vigyan Kendra (KVK) or agriculture officer.
+8. Politely decline questions that are unrelated to farming, rural livelihoods or the weather.
 `;
 
-// Voice-specific system prompt
-const VOICE_SYSTEM_PROMPT = `
-You are Krishi Sakhi (कृषि सखी), a voice-based agricultural assistant for Indian farmers. You are listening to farmers speaking in their local dialect and providing spoken responses.
-
-Guidelines for voice responses:
-1. Keep responses concise and clear for speech
-2. Use simple, conversational language
-3. Avoid technical jargon unless necessary
-4. Structure responses for easy listening
-5. Acknowledge the farmer's query first
-6. Provide step-by-step instructions when needed
-7. Speak in the same language as the query when possible
-8. End with a clear next step or question
-
-Remember: Your response will be spoken aloud, so make it natural and easy to understand.
+const VOICE_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
+Your reply will be read aloud by a speech synthesiser:
+- keep it under about 120 words
+- do not use markdown, bullet symbols, tables or emojis
+- use short, natural spoken sentences and end with one clear next step
 `;
 
-// Get model instance
-const getModel = (isVoice = false) => {
-  return genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash",
-    systemInstruction: isVoice ? VOICE_SYSTEM_PROMPT : SYSTEM_PROMPT
+const languageName = (code) => {
+  const base = String(code || 'en').split('-')[0];
+  const info = getLanguageInfo(base);
+  return info ? info.name : 'English';
+};
+
+const buildPrompt = (message, context = {}) => {
+  const lines = [];
+  const loc = context.farmLocation;
+  if (loc) {
+    const place = typeof loc === 'string'
+      ? loc
+      : [loc.district, loc.state].filter(Boolean).join(', ');
+    const coords = loc && loc.lat != null && loc.lng != null ? ` (${loc.lat}, ${loc.lng})` : '';
+    if (place || coords) lines.push(`Farm location: ${place}${coords}`);
+  }
+  if (context.cropType) lines.push(`Current crop: ${context.cropType}`);
+  const fd = context.farmDetails || {};
+  if (fd.crops && fd.crops.length) lines.push(`Crops grown: ${fd.crops.join(', ')}`);
+  if (fd.soilType) lines.push(`Soil type: ${fd.soilType}`);
+  if (fd.irrigation) lines.push(`Irrigation: ${fd.irrigation}`);
+  if (context.recentActivities && context.recentActivities.length) {
+    lines.push(`Farmer's recent diary: ${context.recentActivities.map((a) => `${a.date} ${a.type}${a.crop ? ` (${a.crop})` : ''}${a.notes ? `: ${a.notes.slice(0, 80)}` : ''}`).join('; ')}`);
+  }
+  // Local knowledge base for the crops in question
+  const cropKeys = new Set([context.cropType, ...(fd.crops || []), message].map(resolveCrop).filter(Boolean));
+  [...cropKeys].slice(0, 2).forEach((k) => {
+    const c = CROPS[k];
+    lines.push(`Local reference for ${c.name}: seasons ${c.seasons.map((s) => `${s.name} sow ${s.sow}`).join('; ')}; common pests ${c.pests.map((p) => p.name).join(', ')}.`);
   });
+  if (context.season) lines.push(`Season: ${context.season}`);
+  if (context.farmSize) lines.push(`Farm size: ${context.farmSize} acres`);
+  lines.push(`Today's date: ${new Date().toISOString().slice(0, 10)}`);
+  lines.push(`Reply in ${languageName(context.language)}.`);
+  return `${lines.join('\n')}\n\nFarmer's question: ${message}`;
 };
 
-// Generate chat response
-const generateResponse = async (message, context = {}) => {
+// Converts stored messages into Gemini chat history (must start with a user turn).
+const toHistory = (messages) => {
+  const history = messages
+    .filter((m) => m.type === 'user' || m.type === 'bot')
+    .map((m) => ({ role: m.type === 'user' ? 'user' : 'model', parts: [{ text: m.message }] }));
+  while (history.length && history[0].role !== 'user') history.shift();
+  return history;
+};
+
+const generateResponse = async (message, context = {}, previousMessages = []) => {
+  const startTime = Date.now();
   try {
-    const startTime = Date.now();
-    const model = getModel(context.isVoice);
-
-    // Build context-aware prompt
-    let contextPrompt = message;
-    
-    // Add voice context if applicable
-    if (context.isVoice) {
-      contextPrompt = `Voice Query in ${context.language || 'Hindi'}: "${message}"\n\nProvide a clear, spoken response.`;
+    const model = getModel({ systemInstruction: context.isVoice ? VOICE_SYSTEM_PROMPT : SYSTEM_PROMPT });
+    const chat = model.startChat({
+      history: toHistory(previousMessages),
+      generationConfig: { temperature: 0.6, maxOutputTokens: context.isVoice ? 512 : 2048 }
+    });
+    const result = await chat.sendMessage(buildPrompt(message, context));
+    const text = result.response.text();
+    if (!text || !text.trim()) {
+      throw Object.assign(new Error('Empty response from Gemini'), { status: 502 });
     }
-    
-    if (context.farmLocation) {
-      contextPrompt += `\n\nFarm location: ${context.farmLocation.state || ''}, ${context.farmLocation.district || ''} (${context.farmLocation.lat}, ${context.farmLocation.lng})`;
-    }
-    
-    if (context.cropType) {
-      contextPrompt += `\nCurrent crop: ${context.cropType}`;
-    }
-    
-    if (context.season) {
-      contextPrompt += `\nSeason: ${context.season}`;
-    }
-    
-    if (context.farmSize) {
-      contextPrompt += `\nFarm size: ${context.farmSize} acres`;
-    }
-
-    // Add previous conversation context
-    if (context.previousMessages && context.previousMessages.length > 0) {
-      contextPrompt += '\n\nRecent conversation:';
-      context.previousMessages.slice(-3).forEach((msg, index) => {
-        contextPrompt += `\n${msg.type}: ${msg.message}`;
-      });
-    }
-
-    // Generate response
-    const result = await model.generateContent(contextPrompt);
-    const response = await result.response;
-    const text = response.text();
-    
-    const processingTime = Date.now() - startTime;
-
+    const usage = result.response.usageMetadata || {};
     return {
-      message: text,
+      message: text.trim(),
       metadata: {
-        confidence: 0.85, // Placeholder - Gemini doesn't provide confidence scores
-        processingTime,
-        model: 'gemini-1.5-flash',
-        tokens: {
-          input: Math.ceil(contextPrompt.length / 4), // Rough estimate
-          output: Math.ceil(text.length / 4)
-        }
+        model: getModelName(),
+        processingTime: Date.now() - startTime,
+        tokens: { input: usage.promptTokenCount || 0, output: usage.candidatesTokenCount || 0 }
       }
     };
-
   } catch (error) {
-    console.error('Gemini API error:', error);
-    
-    // Fallback response
-    return {
-      message: "I apologize, but I'm experiencing technical difficulties right now. Please try again in a few moments. In the meantime, you can check our community forum for answers to common farming questions.",
-      metadata: {
-        confidence: 0,
-        processingTime: 0,
-        model: 'fallback',
-        error: error.message,
-        tokens: { input: 0, output: 0 }
-      }
-    };
+    throw toAIError(error);
   }
 };
 
-// Save chat message to database
-const saveChatMessage = async (messageData) => {
-  try {
-    const chatMessage = await ChatMessage.create({
-      userId: messageData.user,
-      sessionId: messageData.sessionId,
-      type: messageData.type,
-      message: messageData.message,
-      language: messageData.language || 'en',
-      context: messageData.context || {},
-      metadata: messageData.metadata || {},
-      attachments: messageData.attachments || [],
-      feedback: messageData.feedback || {},
-      isRead: messageData.isRead || false,
-      isPinned: messageData.isPinned || false
-    });
-    return chatMessage;
-  } catch (error) {
-    console.error('Error saving chat message:', error);
-    throw error;
-  }
+const getChatHistory = (sessionId, limit = 50) => ChatMessage.findAll({
+  where: { sessionId },
+  order: [['created_at', 'ASC'], ['id', 'ASC']],
+  limit: Math.min(parseInt(limit, 10) || 50, 200)
+});
+
+const getRecentMessages = async (sessionId, limit = 10) => {
+  const messages = await ChatMessage.findAll({
+    where: { sessionId },
+    order: [['created_at', 'DESC'], ['id', 'DESC']],
+    limit
+  });
+  return messages.reverse();
 };
 
-// Get chat history
-const getChatHistory = async (sessionId, limit = 50) => {
-  try {
-    const messages = await ChatMessage.findAll({
-      where: { sessionId },
-      order: [['created_at', 'ASC']],
-      limit: parseInt(limit),
-      // Note: User association will be handled by Sequelize associations
-      // include: [
-      //   {
-      //     model: User,
-      //     as: 'user',
-      //     attributes: ['name', 'avatar'],
-      //     required: false
-      //   }
-      // ]
-    });
-    
-    return messages;
-  } catch (error) {
-    console.error('Error fetching chat history:', error);
-    throw error;
-  }
-};
-
-// Get recent messages for context
-const getRecentMessages = async (sessionId, limit = 5) => {
-  try {
-    const messages = await ChatMessage.findAll({
-      where: { sessionId },
-      order: [['created_at', 'DESC']],
-      limit: parseInt(limit),
-      attributes: ['type', 'message', 'created_at']
-    });
-    
-    return messages.reverse(); // Return in chronological order
-  } catch (error) {
-    console.error('Error fetching recent messages:', error);
-    return [];
-  }
-};
-
-// Process chat request
 const processChatRequest = async (sessionId, userMessage, user = null, context = {}) => {
-  try {
-    // If ChatMessage model is not available, use mock data
-    if (!ChatMessage) {
-      console.log('Using mock chat without database');
-      const mockUserMessage = {
-        id: `user-${Date.now()}`,
-        sessionId,
-        type: 'user',
-        message: userMessage,
-        created_at: new Date().toISOString()
-      };
-      
-      // Generate AI response
-      const aiResponse = await generateResponse(userMessage, context);
-      
-      const mockBotMessage = {
-        id: `bot-${Date.now()}`,
-        sessionId,
-        type: 'bot',
-        message: aiResponse.message,
-        created_at: new Date().toISOString(),
-        metadata: aiResponse.metadata
-      };
-      
-      return {
-        userMessage: mockUserMessage,
-        botMessage: mockBotMessage
-      };
-    }
-    // Save user message
-    const userMessageData = {
-      sessionId,
-      type: 'user',
-      message: userMessage,
-      user: user?._id,
-      language: context.language || 'en',
-      context: {
-        farmLocation: context.farmLocation,
-        cropType: context.cropType,
-        season: context.season,
-        farmSize: context.farmSize,
-        previousMessages: context.previousMessages || 0
-      }
-    };
+  const recent = await getRecentMessages(sessionId, 10);
 
-    const savedUserMessage = await saveChatMessage(userMessageData);
-
-    // Get recent conversation for context
-    const recentMessages = await getRecentMessages(sessionId, 5);
-    
-    // Generate AI response
-    const aiResponse = await generateResponse(userMessage, {
-      ...context,
-      previousMessages: recentMessages
-    });
-
-    // Save bot response
-    const botMessageData = {
-      sessionId,
-      type: 'bot',
-      message: aiResponse.message,
-      language: context.language || 'en',
-      context: {
-        farmLocation: context.farmLocation,
-        cropType: context.cropType,
-        season: context.season,
-        farmSize: context.farmSize,
-        previousMessages: recentMessages.length + 1
-      },
-      metadata: aiResponse.metadata
-    };
-
-    const savedBotMessage = await saveChatMessage(botMessageData);
-
-    return {
-      userMessage: savedUserMessage,
-      botMessage: savedBotMessage
-    };
-
-  } catch (error) {
-    console.error('Error processing chat request:', error);
-    throw error;
+  // A session that already belongs to another user cannot be continued.
+  const owner = recent.find((m) => m.userId != null);
+  if (owner && (!user || owner.userId !== user.id)) {
+    const err = new Error('This chat session belongs to another user.');
+    err.statusCode = 403;
+    throw err;
   }
-};
 
-// Update message feedback
-const updateMessageFeedback = async (messageId, feedback) => {
-  try {
-    if (ChatMessage) {
-      const [updatedRowsCount, updatedRows] = await ChatMessage.update(
-        { feedback },
-        { 
-          where: { id: messageId },
-          returning: true
-        }
-      );
-      
-      if (updatedRowsCount > 0) {
-        return updatedRows[0] || await ChatMessage.findByPk(messageId);
-      }
-      return null;
-    } else {
-      // Return mock success if no database
-      return { id: messageId, feedback };
-    }
-  } catch (error) {
-    console.error('Error updating message feedback:', error);
-    return { id: messageId, feedback }; // Return mock success on error
+  if (user) {
+    context.farmDetails = user.farmDetails || {};
+    context.recentActivities = await FarmActivity.findAll({ where: { userId: user.id }, order: [['date', 'DESC']], limit: 5, raw: true });
   }
+
+  // Ask the AI first so a failed request does not leave a half-saved exchange.
+  const aiResponse = await generateResponse(userMessage, context, recent);
+
+  const storedContext = {
+    farmLocation: context.farmLocation,
+    cropType: context.cropType,
+    season: context.season,
+    farmSize: context.farmSize,
+    isVoice: Boolean(context.isVoice)
+  };
+
+  const savedUser = await ChatMessage.create({
+    userId: user ? user.id : null,
+    sessionId,
+    type: 'user',
+    message: userMessage,
+    language: context.language || 'en',
+    context: storedContext
+  });
+  const savedBot = await ChatMessage.create({
+    userId: user ? user.id : null,
+    sessionId,
+    type: 'bot',
+    message: aiResponse.message,
+    language: context.language || 'en',
+    context: storedContext,
+    metadata: aiResponse.metadata
+  });
+
+  return { userMessage: savedUser, botMessage: savedBot };
 };
 
-// Get popular questions for quick replies
-const getPopularQuestions = () => {
-  return [
-    {
-      category: 'general',
-      questions: [
-        'What crops are best for my region?',
-        'How do I test my soil quality?',
-        'What fertilizer should I use?',
-        'How to deal with pests naturally?'
-      ]
-    },
-    {
-      category: 'weather',
-      questions: [
-        'Should I irrigate before rain?',
-        'How to protect crops from heavy rain?',
-        'Best time to sow seeds?',
-        'Drought management techniques?'
-      ]
-    }
-  ];
+const processVoiceRequest = (sessionId, voiceMessage, user = null, context = {}) => (
+  processChatRequest(sessionId, voiceMessage, user, { ...context, isVoice: true })
+);
+
+const updateMessageFeedback = async (messageId, sessionId, feedback) => {
+  const message = await ChatMessage.findOne({ where: { id: messageId, sessionId, type: 'bot' } });
+  if (!message) return null;
+  await message.update({ feedback: { ...(message.feedback || {}), ...feedback, updatedAt: new Date() } });
+  return message;
 };
 
-// Process voice request with dialect handling
-const processVoiceRequest = async (sessionId, voiceMessage, user = null, context = {}) => {
-  try {
-    // Enhanced context for voice queries
-    const voiceContext = {
-      ...context,
-      isVoice: true,
-      language: context.language || 'hi-IN',
-      queryTime: context.queryTime || new Date().toISOString()
-    };
+// Lists a user's sessions with their latest message.
+const getUserSessions = async (userId, limit = 20) => {
+  const rows = await ChatMessage.findAll({
+    where: { userId },
+    attributes: ['sessionId', [fn('MAX', col('created_at')), 'lastActivity'], [fn('COUNT', col('id')), 'messageCount']],
+    group: ['sessionId'],
+    order: [[fn('MAX', col('created_at')), 'DESC']],
+    limit,
+    raw: true
+  });
+  if (!rows.length) return [];
 
-    // Process as regular chat but with voice context
-    const result = await processChatRequest(sessionId, voiceMessage, user, voiceContext);
+  const latest = await ChatMessage.findAll({
+    where: { sessionId: { [Op.in]: rows.map((r) => r.sessionId) }, type: 'user' },
+    order: [['created_at', 'DESC']],
+    raw: true
+  });
+  return rows.map((r) => ({
+    sessionId: r.sessionId,
+    lastActivity: r.lastActivity,
+    messageCount: Number(r.messageCount),
+    lastMessage: (latest.find((m) => m.sessionId === r.sessionId) || {}).message || ''
+  }));
+};
 
-    // Enhance response for voice
-    if (result.botMessage && result.botMessage.message) {
-      // Add voice-specific formatting if needed
-      result.botMessage.message = result.botMessage.message
-        .replace(/\n\n/g, '. ') // Replace double newlines with periods for better speech
-        .replace(/\n/g, ', ') // Replace single newlines with commas
-        .replace(/[*_]/g, ''); // Remove markdown formatting
-    }
-
-    return result;
-  } catch (error) {
-    console.error('Error processing voice request:', error);
-    throw error;
+const getPopularQuestions = () => [
+  {
+    category: 'general',
+    questions: [
+      'What crops are best for my region?',
+      'How do I test my soil quality?',
+      'What fertilizer should I use?',
+      'How to deal with pests naturally?'
+    ]
+  },
+  {
+    category: 'weather',
+    questions: [
+      'Should I irrigate before rain?',
+      'How to protect crops from heavy rain?',
+      'Best time to sow seeds?',
+      'Drought management techniques?'
+    ]
   }
-};
+];
 
 module.exports = {
   generateResponse,
-  saveChatMessage,
   getChatHistory,
+  getRecentMessages,
   processChatRequest,
   processVoiceRequest,
   updateMessageFeedback,
-  getPopularQuestions,
-  getRecentMessages
+  getUserSessions,
+  getPopularQuestions
 };

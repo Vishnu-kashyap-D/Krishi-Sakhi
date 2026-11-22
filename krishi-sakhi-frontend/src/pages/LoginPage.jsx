@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { authAPI } from '../api/services';
+import { getErrorMessage } from '../api/client';
+import { setSession } from '../utils/auth';
 import { FaUser, FaLock, FaSignInAlt, FaLeaf } from 'react-icons/fa';
 
 const LoginPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -26,23 +29,14 @@ const LoginPage = () => {
     setError('');
 
     try {
-      // Get users from localStorage
-      const existingUsers = JSON.parse(localStorage.getItem('users') || '[]');
-      const user = existingUsers.find(u => u.email === formData.email);
-      
-      if (user) {
-        // For demo, accept any password
-        localStorage.setItem('user', JSON.stringify(user));
-        localStorage.setItem('auth_token', 'mock-token-' + user.id);
-        
-        // Redirect to farm analysis dashboard
-        navigate('/farm-analysis');
-      } else {
-        setError('Email not found. Please sign up first.');
-      }
+      const result = await authAPI.login({
+        email: formData.email.trim(),
+        password: formData.password,
+      });
+      setSession(result.data.token, result.data.user);
+      navigate(location.state?.from || '/farm-analysis');
     } catch (error) {
-      console.error('Login error:', error);
-      setError('Login failed. Please try again.');
+      setError(getErrorMessage(error, 'Login failed. Please try again.'));
     } finally {
       setIsLoading(false);
     }

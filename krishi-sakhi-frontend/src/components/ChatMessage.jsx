@@ -1,5 +1,6 @@
 import React from 'react';
 import { FaUser, FaRobot, FaThumbsUp, FaThumbsDown, FaCheckCircle } from 'react-icons/fa';
+import SimpleMarkdown from './SimpleMarkdown';
 
 const ChatMessage = ({ message, onFeedback }) => {
   const isBot = message.type === 'bot';
@@ -31,9 +32,13 @@ const ChatMessage = ({ message, onFeedback }) => {
               : 'bg-white shadow-md'
             : 'bg-blue-600 text-white'
         }`}>
-          <p className="text-sm md:text-base whitespace-pre-wrap break-words">
-            {message.message}
-          </p>
+          {isBot && !isError ? (
+            <SimpleMarkdown text={message.message} />
+          ) : (
+            <p className="text-sm md:text-base whitespace-pre-wrap break-words">
+              {message.message}
+            </p>
+          )}
 
           {/* Metadata */}
           {message.metadata && (
