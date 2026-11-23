@@ -77,4 +77,4 @@ Gemini for AI, open geospatial/weather APIs for data. The app is a "personal far
 - Crop-photo upload through the browser was only tested with a generated image; the positive path was tested via the API.
 - Land cover, NDVI, groundwater, P and K remain estimates until a real source (e.g. Bhuvan / Sentinel NDVI with credentials, CGWB data) is integrated.
 - SMS/push notifications for reminders; expert booking confirmations; image uploads for listings/posts.
-- Old docs (`QUICK_START.md`, `RUN_NOW.txt`, `IMPLEMENTATION_SUMMARY.md`, `techstack.txt`, etc.) describe the earlier mock-based version.
+- `techstack.txt` (untracked, not part of the repo) still describes the earlier mock-based version. Older change notes were moved to `docs/archive/`.
