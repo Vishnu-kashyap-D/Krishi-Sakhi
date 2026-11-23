@@ -96,4 +96,3 @@ npm run build
 - SoilGrids is frequently slow or unavailable; the app then falls back to labelled estimates.
 - Malayalam is intentionally not offered in the UI (team decision); the assistant can still answer in any language Gemini supports.
 - Expert profiles and success stories are curated sample content; booking requests are stored but no notification is sent.
-- See `AUDIT_REPORT.md` for the full audit, fixes and remaining work.
