@@ -23,7 +23,7 @@ export default defineConfig([
     },
     rules: {
       // JSX usage is not tracked by no-unused-vars without the React plugin.
-      'no-unused-vars': ['warn', { varsIgnorePattern: '^[A-Z_]', argsIgnorePattern: '^_' }],
+      'no-unused-vars': ['warn', { varsIgnorePattern: '^[A-Z_]', argsIgnorePattern: '^[A-Z_]' }],
       'react-refresh/only-export-components': 'off',
     },
   },

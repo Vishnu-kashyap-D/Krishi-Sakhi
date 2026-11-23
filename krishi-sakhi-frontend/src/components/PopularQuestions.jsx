@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { chatAPI } from '../api/services';
 import { useLanguage } from '../context/LanguageContext';
 import { FaQuestionCircle, FaSpinner } from 'react-icons/fa';
 
@@ -7,7 +6,7 @@ const PopularQuestions = ({ onQuestionClick }) => {
   const { translate } = useLanguage();
   const [questions, setQuestions] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error] = useState(null);
 
   // Use hardcoded popular questions instead of API
   useEffect(() => {

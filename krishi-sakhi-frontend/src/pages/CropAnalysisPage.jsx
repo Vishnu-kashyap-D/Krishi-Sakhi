@@ -7,7 +7,7 @@ import { getErrorMessage } from '../api/client';
 const SUPPORTED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
 
 const CropAnalysisPage = () => {
-  const { translate } = useLanguage();
+  useLanguage(); // re-render when the UI language changes
   const [selectedImage, setSelectedImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [loading, setLoading] = useState(false);
