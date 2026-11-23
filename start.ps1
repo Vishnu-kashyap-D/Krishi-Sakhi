@@ -1,27 +1,33 @@
-# Start Krishi Sakhi Application
+# Start Krishi Sakhi (backend on 3001, frontend on 3000)
+$root = $PSScriptRoot
+$backend = Join-Path $root 'krishi-sakhi-backend'
+$frontend = Join-Path $root 'krishi-sakhi-frontend'
 
-Write-Host "Starting Krishi Sakhi Application..." -ForegroundColor Green
-Write-Host ""
+Write-Host "Starting Krishi Sakhi..." -ForegroundColor Green
 
-# Start Backend
-Write-Host "Starting Backend Server on port 3001..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd krishi-sakhi-backend; npm start" -WindowStyle Normal
+# First run: create the backend .env from the example so the server can start.
+$envFile = Join-Path $backend '.env'
+if (-not (Test-Path $envFile)) {
+    Copy-Item (Join-Path $backend '.env.example') $envFile
+    Write-Host "Created krishi-sakhi-backend\.env from .env.example." -ForegroundColor Yellow
+    Write-Host "Set GEMINI_API_KEY (AI features) and JWT_SECRET in that file." -ForegroundColor Yellow
+}
 
-# Wait a bit for backend to start
+# Install dependencies if they are missing.
+foreach ($dir in @($backend, $frontend)) {
+    if (-not (Test-Path (Join-Path $dir 'node_modules'))) {
+        Write-Host "Installing dependencies in $dir ..." -ForegroundColor Yellow
+        Push-Location $dir
+        npm install
+        Pop-Location
+    }
+}
+
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$backend'; npm start" -WindowStyle Normal
 Start-Sleep -Seconds 3
-
-# Start Frontend
-Write-Host "Starting Frontend Application on port 3000..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd krishi-sakhi-frontend; npm run dev" -WindowStyle Normal
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$frontend'; npm run dev" -WindowStyle Normal
 
 Write-Host ""
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Krishi Sakhi is starting!" -ForegroundColor Green
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "Backend API: http://localhost:3001" -ForegroundColor White
+Write-Host "Backend API: http://localhost:3001  (health: /api/health)" -ForegroundColor White
 Write-Host "Frontend UI: http://localhost:3000" -ForegroundColor White
-Write-Host ""
-Write-Host "The application will open in your browser automatically." -ForegroundColor Gray
-Write-Host "To stop, close both PowerShell windows." -ForegroundColor Gray
-Write-Host ""
+Write-Host "Close both PowerShell windows to stop." -ForegroundColor Gray
