@@ -1,37 +1,19 @@
-🚀 KRISHI SAKHI - RUN IMMEDIATELY
-=================================
+KRISHI SAKHI - HOW TO RUN
+=========================
 
-STEP 1: Open 2 PowerShell windows
+Full instructions: README.md
 
-STEP 2: In PowerShell Window 1, run:
-   cd V:\vishnu\random\hackathons\SIH\sih25168\krishi-sakhi-backend
-   npm start
+1. Backend (PowerShell window 1)
+   cd krishi-sakhi-backend
+   npm install
+   copy .env.example .env      (then set GEMINI_API_KEY and JWT_SECRET)
+   npm start                   -> http://localhost:3001  (check /api/health)
 
-   (Wait for "Server is running on port 3001")
+2. Frontend (PowerShell window 2)
+   cd krishi-sakhi-frontend
+   npm install
+   npm run dev                 -> http://localhost:3000
 
-STEP 3: In PowerShell Window 2, run:
-   cd V:\vishnu\random\hackathons\SIH\sih25168\krishi-sakhi-frontend
-   npm run dev
+Or run .\start.ps1 from this folder to open both.
 
-   (Wait for "Local: http://localhost:3000")
-
-STEP 4: Open browser to http://localhost:3000
-
-THAT'S IT! ✅
-
-HOW TO USE:
-1. Click on the map to select farm location
-2. Adjust acres with +/- buttons
-3. Click "Analyze My Farm"
-4. See the results!
-
-VERIFIED WORKING ✅
-- All dependencies installed
-- React version fixed
-- File paths corrected
-- API integration ready
-
-IF ANY ISSUES:
-- Make sure both terminals show servers running
-- Check http://localhost:3001 shows API info
-- Check http://localhost:3000 shows the app
+Tests: cd krishi-sakhi-backend && npm test

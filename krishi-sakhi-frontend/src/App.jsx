@@ -1,21 +1,30 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, lazy, Suspense } from 'react';
 import { Routes, Route, useLocation, Link } from 'react-router-dom';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import { LanguageProvider } from './context/LanguageContext';
 import HomePage from './pages/HomePage';
-import FarmAnalysisPage from './pages/FarmAnalysisPage';
-import CropAnalysisPage from './pages/CropAnalysisPage';
-import ChatbotPage from './pages/ChatbotPage';
-import MarketplacePage from './pages/MarketplacePage';
-import WeatherPage from './pages/WeatherPage';
-import LoginPage from './pages/LoginPage';
-import SignupPage from './pages/SignupPage';
-import ProfilePage from './pages/ProfilePage';
-import CommunityPage from './pages/CommunityPage';
-import CreateProductPage from './pages/CreateProductPage';
-import ProductDetailPage from './pages/ProductDetailPage';
-import MyFarmPage from './pages/MyFarmPage';
+
+// Each page is loaded on demand so heavy libraries (Leaflet, Chart.js) are
+// only downloaded on the pages that use them.
+const FarmAnalysisPage = lazy(() => import('./pages/FarmAnalysisPage'));
+const CropAnalysisPage = lazy(() => import('./pages/CropAnalysisPage'));
+const ChatbotPage = lazy(() => import('./pages/ChatbotPage'));
+const MarketplacePage = lazy(() => import('./pages/MarketplacePage'));
+const WeatherPage = lazy(() => import('./pages/WeatherPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const SignupPage = lazy(() => import('./pages/SignupPage'));
+const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const CommunityPage = lazy(() => import('./pages/CommunityPage'));
+const CreateProductPage = lazy(() => import('./pages/CreateProductPage'));
+const ProductDetailPage = lazy(() => import('./pages/ProductDetailPage'));
+const MyFarmPage = lazy(() => import('./pages/MyFarmPage'));
+
+const PageLoader = () => (
+  <div className="flex justify-center py-24" role="status" aria-label="Loading">
+    <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary-600 border-t-transparent" />
+  </div>
+);
 
 const NotFound = () => (
   <div className="mx-auto max-w-xl px-4 py-24 text-center">
@@ -39,6 +48,7 @@ function App() {
         <Header />
         <main className="flex-1" key={location.pathname}>
           <div className="fade-in">
+            <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignupPage />} />
@@ -55,6 +65,7 @@ function App() {
               <Route path="/my-farm" element={<MyFarmPage />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
+            </Suspense>
           </div>
         </main>
         {!isAuthPage && location.pathname !== '/chatbot' && <Footer />}

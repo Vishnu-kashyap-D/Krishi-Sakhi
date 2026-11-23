@@ -28,3 +28,5 @@ logs/
 # Testing
 coverage/
 .nyc_output/
+# Local SQLite database (contains user data; created automatically on first start)
+database/*.db

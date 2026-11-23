@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { FaGlobe, FaChevronDown } from 'react-icons/fa';
 import { languageAPI } from '../api/services';
 
+let languagesRequest = null;
+
 const LanguageSwitcher = ({ currentLanguage = 'en', onLanguageChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [languages, setLanguages] = useState([]);
@@ -27,8 +29,10 @@ const LanguageSwitcher = ({ currentLanguage = 'en', onLanguageChange }) => {
 
   const fetchLanguages = async () => {
     try {
-      const data = await languageAPI.getLanguages();
-      
+      // One request per page load, shared by every switcher instance.
+      if (!languagesRequest) languagesRequest = languageAPI.getLanguages();
+      const data = await languagesRequest;
+
       if (data.success) {
         const languageList = Object.entries(data.data.languages).map(([code, info]) => ({
           code,
@@ -37,8 +41,8 @@ const LanguageSwitcher = ({ currentLanguage = 'en', onLanguageChange }) => {
         }));
         setLanguages(languageList);
       }
-    } catch (error) {
-      console.error('Failed to fetch languages:', error);
+    } catch {
+      // The built-in list below is used when the server is unreachable.
       // Fallback to default languages
       setLanguages([
         { code: 'en', name: 'English', flag: '🇬🇧' },
